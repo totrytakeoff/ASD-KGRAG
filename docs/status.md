@@ -24,6 +24,8 @@
 
 `项目已从 pilot 质量收敛阶段，进入“7568 条主干 chunk 的批量抽取、错误重跑、合并、归一化和导图”阶段。`
 
+由于当前模型接口窗口 timeout/SSL 错误偏多，已开始并行推进不依赖 LLM 的 Neo4j 实入库准备工作。
+
 ## 已完成工作
 
 ### 1. 数据提取
@@ -155,6 +157,8 @@
 
 - `scripts/extraction/normalize_extractions.py`
 - `scripts/graph/export_neo4j_import.py`
+- `scripts/graph/generate_neo4j_load_cypher.py`
+- `scripts/graph/write_validation_queries.py`
 - `docs/data_process/graph_export_sop.md`
 
 已验证产物：
@@ -163,6 +167,8 @@
 - `data/processed/neo4j_import_full_ab_nonbook_v5_partial372`
 - `data/processed/normalized_full_ab_nonbook_v5_current_revalidated`
 - `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated`
+- `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/load_current.cypher`
+- `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/validation_queries.cypher`
 
 `partial372` 归一化摘要：
 
@@ -208,6 +214,18 @@
 - entity relationships：`351`
 - supports relationships：`523`
 - from relationships：`616`
+
+Neo4j 实入库准备：
+
+- 已生成 current 版 `LOAD CSV` Cypher loader
+- 已生成基础验证查询：
+  - 节点/关系计数
+  - 实体类型分布
+  - ASD/autism 相关筛查诊断工具
+  - 干预适用目标
+  - 关系证据回溯
+  - 研究模态类 `MEASURED_BY` 人工复核查询
+- loader 依赖 APOC 的 `apoc.merge.relationship` 来保留动态关系类型
 
 ### 7. 新增质量工具与规则修正
 
@@ -367,11 +385,12 @@
 
 要做：
 
-1. 准备 Neo4j import 或 Cypher loader
-2. 导入 entity、chunk、evidence 节点
-3. 导入实体关系、证据支持关系、chunk 来源关系
-4. 写基础 Cypher 查询样例
-5. 验证核心问题能查到合理子图
+1. 已完成：准备 Neo4j import CSV 和 Cypher loader
+2. 已完成：写基础 Cypher 查询样例
+3. 下一步：在本地 Neo4j 实例中启用 APOC
+4. 下一步：复制 current CSV 到 Neo4j import 目录
+5. 下一步：执行 `load_current.cypher`
+6. 下一步：执行 `validation_queries.cypher` 验证核心问题能查到合理子图
 
 ### 第 6 步：embedding 与向量库
 
