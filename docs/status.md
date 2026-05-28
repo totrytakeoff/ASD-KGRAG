@@ -128,23 +128,25 @@
 截至本记录更新时，按主抽取 + retry 重新合并后的实际进度为：
 
 - 主干输入总数：`7568`
-- 已尝试唯一 chunk：`789`
-- 成功：`609`
-- 失败：`180`
-- 剩余未尝试：`6779`
-- 已尝试成功率：约 `77.2%`
-- 原始实体数：`4358`
-- 重校验后原始关系数：`517`
+- 已尝试唯一 chunk：`805`
+- 成功：`616`
+- 失败：`189`
+- 剩余未尝试：`6763`
+- 已尝试成功率：约 `76.5%`
+- 原始实体数：`4406`
+- 重校验后原始关系数：`527`
 - 重校验后平均每个成功 chunk：约 `0.85` 条关系
 
 注意：
 
-- `data/processed/extraction_full_ab_nonbook_v5_merged.jsonl` 已从较早的 `371` 行版本更新到 `789` 行
+- `data/processed/extraction_full_ab_nonbook_v5_merged.jsonl` 已从较早的 `371` 行版本更新到 `805` 行
 - `data/processed/extraction_full_ab_nonbook_v5_merged_revalidated.jsonl` 已用当前校验规则离线重校验，不需要重新调用模型
 - 最近一轮 25 条小批次受接口影响较大，新增结果中 timeout/SSL 错误偏多
 - 已对 timeout 队列做一轮小批次 retry，回收效果有限：`11` 条 retry 中 `6` 条成功、`5` 条仍错误；纳入合并后总成功数净增 `1`
 - 为平衡质量与效率，已新增吞吐模式：`MODE=throughput bash scripts/extraction/run_next_extraction_batch.sh`
-- 最近一轮吞吐模式在 15 分钟内覆盖 `24` 条，`13` 条成功、`11` 条错误；适合主干覆盖推进，但不适合追求单批高成功率
+- 最近两轮吞吐模式分别覆盖 `24` 条和 `16` 条；后一轮 `7` 条成功、`9` 条错误。当前接口状态偏慢，吞吐模式仍适合避免停滞，但成功率会下降
+- 已清理可再生/过期中间产物：非重校验 `current` 图谱导出、`partial372` 归一化和 Neo4j 导出、Python `__pycache__`
+- 已建立 git 基线提交：`1476018`，并提交 `run_next_extraction_batch.sh` 可执行权限修正：`d1f2661`
 
 ### 6. 归一化与 Neo4j 导出
 
@@ -184,13 +186,13 @@
 
 `current_revalidated` 归一化摘要：
 
-- 输入行数：`789`
-- 实体：`1708`
-- 聚合关系：`349`
-- evidence：`609`
+- 输入行数：`805`
+- 实体：`1719`
+- 聚合关系：`351`
+- evidence：`616`
 - 聚合关系分布：
   - `MEASURED_BY`: `146`
-  - `INDICATED_FOR`: `137`
+  - `INDICATED_FOR`: `139`
   - `COMORBID_WITH`: `31`
   - `SUITABLE_AGE`: `20`
   - `SUITABLE_SETTING`: `6`
@@ -199,12 +201,12 @@
 
 `current_revalidated` Neo4j 导出摘要：
 
-- entity nodes：`1708`
+- entity nodes：`1719`
 - chunk nodes：`7568`
-- evidence nodes：`609`
-- entity relationships：`349`
-- supports relationships：`513`
-- from relationships：`609`
+- evidence nodes：`616`
+- entity relationships：`351`
+- supports relationships：`523`
+- from relationships：`616`
 
 ### 7. 新增质量工具与规则修正
 
@@ -404,4 +406,4 @@
 
 ## 当前结论
 
-`前处理、真实模型抽取、归一化和 Neo4j 导出均已跑通；已同步并重校验当前 789 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，为避免停滞，建议以 MODE=throughput 继续提高主干覆盖率，并在接口状态较好时集中执行 timeout retry；每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`
+`前处理、真实模型抽取、归一化和 Neo4j 导出均已跑通；已同步并重校验当前 805 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，为避免停滞，建议以 MODE=throughput 继续提高主干覆盖率，并在接口状态较好时集中执行 timeout retry；每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`
