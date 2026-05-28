@@ -24,7 +24,7 @@
 
 `项目已从 pilot 质量收敛阶段，进入“7568 条主干 chunk 的批量抽取、错误重跑、合并、归一化和导图”阶段。`
 
-由于当前模型接口窗口 timeout/SSL 错误偏多，已开始并行推进不依赖 LLM 的 Neo4j 实入库准备工作。
+由于当前模型接口窗口 timeout/SSL 错误偏多，已并行推进不依赖 LLM 的 Neo4j 实入库准备与本地验证。
 
 ## 已完成工作
 
@@ -194,12 +194,12 @@
 `current_revalidated` 归一化摘要：
 
 - 输入行数：`815`
-- 实体：`1719`
-- 聚合关系：`351`
+- 实体：`1707`
+- 聚合关系：`350`
 - evidence：`616`
 - 聚合关系分布：
   - `MEASURED_BY`: `146`
-  - `INDICATED_FOR`: `139`
+  - `INDICATED_FOR`: `138`
   - `COMORBID_WITH`: `31`
   - `SUITABLE_AGE`: `20`
   - `SUITABLE_SETTING`: `6`
@@ -208,10 +208,10 @@
 
 `current_revalidated` Neo4j 导出摘要：
 
-- entity nodes：`1719`
+- entity nodes：`1707`
 - chunk nodes：`7568`
 - evidence nodes：`616`
-- entity relationships：`351`
+- entity relationships：`350`
 - supports relationships：`523`
 - from relationships：`616`
 
@@ -226,6 +226,15 @@ Neo4j 实入库准备：
   - 关系证据回溯
   - 研究模态类 `MEASURED_BY` 人工复核查询
 - loader 依赖 APOC 的 `apoc.merge.relationship` 来保留动态关系类型
+- 已用 Docker Compose 启动本地 Neo4j 并完成 current 图谱入库验证
+- 已修复归一化阶段少量重复 `entity_id` 输出问题，重刷 current 后 Neo4j 节点/关系计数与导出摘要一致
+- 当前 Neo4j 验证计数：
+  - `Chunk`: `7568`
+  - `Entity`: `1707`
+  - `Evidence`: `616`
+  - `MEASURED_BY`: `146`
+  - `INDICATED_FOR`: `138`
+  - `COMORBID_WITH`: `31`
 
 ### 7. 新增质量工具与规则修正
 
@@ -387,10 +396,11 @@ Neo4j 实入库准备：
 
 1. 已完成：准备 Neo4j import CSV 和 Cypher loader
 2. 已完成：写基础 Cypher 查询样例
-3. 下一步：在本地 Neo4j 实例中启用 APOC
-4. 下一步：复制 current CSV 到 Neo4j import 目录
-5. 下一步：执行 `load_current.cypher`
-6. 下一步：执行 `validation_queries.cypher` 验证核心问题能查到合理子图
+3. 已完成：用 Docker Compose 启动本地 Neo4j 并启用 APOC
+4. 已完成：挂载 current CSV 到 Neo4j import 目录
+5. 已完成：执行 `load_current.cypher`
+6. 已完成：执行 `validation_queries.cypher` 验证核心问题能查到合理子图
+7. 下一步：基于验证查询结果继续抽样清理研究模态类 `MEASURED_BY` 噪声
 
 ### 第 6 步：embedding 与向量库
 
@@ -426,4 +436,4 @@ Neo4j 实入库准备：
 
 ## 当前结论
 
-`前处理、真实模型抽取、归一化和 Neo4j 导出均已跑通；已同步并重校验当前 815 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，最近一轮吞吐尝试全部失败；建议暂停硬跑模型请求，待接口状态恢复后再用 MODE=throughput 提高覆盖率，并在接口状态较好时集中执行 timeout retry。每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`
+`前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通；已同步并重校验当前 815 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，最近一轮吞吐尝试全部失败；建议暂停硬跑模型请求，待接口状态恢复后再用 MODE=throughput 提高覆盖率，并在接口状态较好时集中执行 timeout retry。每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`

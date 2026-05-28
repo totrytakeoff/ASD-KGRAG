@@ -73,6 +73,59 @@ def get_or_create_entity_group(
     return group
 
 
+def merge_entity_groups(entity_groups: list[dict]) -> tuple[list[dict], dict[int, int]]:
+    merged_groups: list[dict] = []
+    key_to_idx: dict[tuple[str, str], int] = {}
+    old_to_new: dict[int, int] = {}
+
+    for old_idx, group in enumerate(entity_groups):
+        group["canonical_name"] = min(group["normalized_aliases"]) if group["normalized_aliases"] else group["canonical_name"]
+        key = (group["entity_type"], group["canonical_name"])
+        if key not in key_to_idx:
+            key_to_idx[key] = len(merged_groups)
+            merged_groups.append(group)
+            old_to_new[old_idx] = key_to_idx[key]
+            continue
+
+        new_idx = key_to_idx[key]
+        target = merged_groups[new_idx]
+        target["normalized_aliases"].update(group["normalized_aliases"])
+        target["name_counter"].update(group["name_counter"])
+        target["description_counter"].update(group["description_counter"])
+        target["synonyms"].update(group["synonyms"])
+        target["source_chunk_ids"].update(group["source_chunk_ids"])
+        target["source_doc_ids"].update(group["source_doc_ids"])
+        old_to_new[old_idx] = new_idx
+
+    return merged_groups, old_to_new
+
+
+def remap_relation_groups(relation_groups: dict[tuple[int, str, int], dict], old_to_new: dict[int, int]) -> dict[tuple[int, str, int], dict]:
+    remapped: dict[tuple[int, str, int], dict] = {}
+    for group in relation_groups.values():
+        src_idx = old_to_new[group["src_group_idx"]]
+        dst_idx = old_to_new[group["dst_group_idx"]]
+        key = (src_idx, group["relation_type"], dst_idx)
+        if key not in remapped:
+            remapped[key] = {
+                "src_group_idx": src_idx,
+                "relation_type": group["relation_type"],
+                "dst_group_idx": dst_idx,
+                "confidence_values": [],
+                "evidence_texts": [],
+                "support_chunk_ids": set(),
+                "support_doc_ids": set(),
+                "support_evidence_ids": set(),
+            }
+        target = remapped[key]
+        target["confidence_values"].extend(group["confidence_values"])
+        target["evidence_texts"].extend(group["evidence_texts"])
+        target["support_chunk_ids"].update(group["support_chunk_ids"])
+        target["support_doc_ids"].update(group["support_doc_ids"])
+        target["support_evidence_ids"].update(group["support_evidence_ids"])
+    return remapped
+
+
 def normalize_extractions(rows: list[dict]) -> tuple[list[dict], list[dict], list[dict], dict]:
     entity_groups: list[dict] = []
     relation_groups: dict[tuple[int, str, int], dict] = {}
@@ -148,6 +201,9 @@ def normalize_extractions(rows: list[dict]) -> tuple[list[dict], list[dict], lis
                 group["support_doc_ids"].add(row["doc_id"])
             if evidence.get("evidence_id"):
                 group["support_evidence_ids"].add(evidence["evidence_id"])
+
+    entity_groups, old_to_new = merge_entity_groups(entity_groups)
+    relation_groups = remap_relation_groups(relation_groups, old_to_new)
 
     entities_out: list[dict] = []
     canonical_map: dict[str, list[str]] = {}
