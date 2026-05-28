@@ -128,23 +128,24 @@
 截至本记录更新时，按主抽取 + retry 重新合并后的实际进度为：
 
 - 主干输入总数：`7568`
-- 已尝试唯一 chunk：`805`
+- 已尝试唯一 chunk：`815`
 - 成功：`616`
-- 失败：`189`
-- 剩余未尝试：`6763`
-- 已尝试成功率：约 `76.5%`
+- 失败：`199`
+- 剩余未尝试：`6753`
+- 已尝试成功率：约 `75.6%`
 - 原始实体数：`4406`
 - 重校验后原始关系数：`527`
 - 重校验后平均每个成功 chunk：约 `0.85` 条关系
 
 注意：
 
-- `data/processed/extraction_full_ab_nonbook_v5_merged.jsonl` 已从较早的 `371` 行版本更新到 `805` 行
+- `data/processed/extraction_full_ab_nonbook_v5_merged.jsonl` 已从较早的 `371` 行版本更新到 `815` 行
 - `data/processed/extraction_full_ab_nonbook_v5_merged_revalidated.jsonl` 已用当前校验规则离线重校验，不需要重新调用模型
 - 最近一轮 25 条小批次受接口影响较大，新增结果中 timeout/SSL 错误偏多
 - 已对 timeout 队列做一轮小批次 retry，回收效果有限：`11` 条 retry 中 `6` 条成功、`5` 条仍错误；纳入合并后总成功数净增 `1`
 - 为平衡质量与效率，已新增吞吐模式：`MODE=throughput bash scripts/extraction/run_next_extraction_batch.sh`
 - 最近两轮吞吐模式分别覆盖 `24` 条和 `16` 条；后一轮 `7` 条成功、`9` 条错误。当前接口状态偏慢，吞吐模式仍适合避免停滞，但成功率会下降
+- 最近一轮吞吐模式继续尝试 `10` 条后人工停止，`10` 条均为 timeout/connection 错误；当前接口窗口不适合继续硬跑模型请求
 - 已清理可再生/过期中间产物：非重校验 `current` 图谱导出、`partial372` 归一化和 Neo4j 导出、Python `__pycache__`
 - 已建立 git 基线提交：`1476018`，并提交 `run_next_extraction_batch.sh` 可执行权限修正：`d1f2661`
 
@@ -186,7 +187,7 @@
 
 `current_revalidated` 归一化摘要：
 
-- 输入行数：`805`
+- 输入行数：`815`
 - 实体：`1719`
 - 聚合关系：`351`
 - evidence：`616`
@@ -406,4 +407,4 @@
 
 ## 当前结论
 
-`前处理、真实模型抽取、归一化和 Neo4j 导出均已跑通；已同步并重校验当前 805 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，为避免停滞，建议以 MODE=throughput 继续提高主干覆盖率，并在接口状态较好时集中执行 timeout retry；每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`
+`前处理、真实模型抽取、归一化和 Neo4j 导出均已跑通；已同步并重校验当前 815 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，最近一轮吞吐尝试全部失败；建议暂停硬跑模型请求，待接口状态恢复后再用 MODE=throughput 提高覆盖率，并在接口状态较好时集中执行 timeout retry。每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`

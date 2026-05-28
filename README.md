@@ -41,6 +41,7 @@
 
 下一阶段入口：
 - `scripts/extraction/run_next_extraction_batch.sh`
+- `scripts/extraction/refresh_current_outputs.sh`
 - `scripts/extraction/merge_extraction_runs.py`
 - `scripts/extraction/revalidate_extraction_run.py`
 - `scripts/extraction/summarize_extraction_run.py`
