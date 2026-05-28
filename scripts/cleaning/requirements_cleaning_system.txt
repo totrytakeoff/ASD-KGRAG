@@ -1,0 +1,3 @@
+# Cleaning stage runtime requirements
+# Python stdlib only (no third-party pip deps required).
+# Recommended: Python >= 3.10

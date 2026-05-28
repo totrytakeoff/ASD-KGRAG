@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from pathlib import Path
+
+PUNCT_END = set("。！？.!?:：;；)]）】\"'”’")
+CJK_PUNCT_CLOSE = "，。！？；：、）】》〉」』"
+CJK_PUNCT_OPEN = "（【《〈「『"
+
+
+@dataclass
+class CleanResult:
+    doc_id: str
+    relative_path: str
+    source_group: str
+    file_type: str
+    status: str
+    error: str | None
+    raw_chars: int
+    clean_chars: int
+    pages: int
+    language: str
+    flags: list[str]
+
+
+def detect_language(text: str) -> str:
+    zh = len(re.findall(r"[\u4e00-\u9fff]", text))
+    en = len(re.findall(r"[A-Za-z]", text))
+    if zh == 0 and en == 0:
+        return "unknown"
+    return "zh" if zh >= en else "en"
+
+
+def normalize_line(line: str) -> str:
+    line = line.replace("\u00a0", " ").replace("\t", " ").replace("\x00", "")
+    line = re.sub(r"\s+", " ", line).strip()
+    return line
+
+
+def is_noisy_ocr_line(line: str) -> bool:
+    """
+    Detect symbol-heavy OCR garbage lines.
+    Keep thresholds conservative to avoid dropping valid English sentences.
+    """
+    if len(line) < 24:
+        return False
+    toks = line.split()
+    if len(toks) < 6:
+        return False
+
+    short_ratio = sum(1 for t in toks if len(t) <= 2) / len(toks)
+    odd_symbols = len(re.findall(r"[`~^_|\\¤§¥£©®™′]", line))
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", line))
+
+    if odd_symbols >= 3:
+        return True
+    if short_ratio > 0.65 and odd_symbols >= 1 and cjk < 160:
+        return True
+    return False
+
+
+def trim_garbled_prefix(line: str) -> str:
+    """
+    Remove noisy non-CJK prefix before the first stable Chinese text span.
+    """
+    m = re.search(r"[\u4e00-\u9fff]{8,}", line)
+    if not m or m.start() < 12:
+        return line
+    prefix = line[: m.start()].strip()
+    if not prefix:
+        return line
+
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", prefix))
+    latin = len(re.findall(r"[A-Za-z]", prefix))
+    single = len(re.findall(r"\b[A-Za-z]\b", prefix))
+    odd = len(re.findall(r"[`~^_|\\¤§¥£©®™′]", prefix))
+    if cjk <= 3 and (single >= 3 or odd >= 2 or (latin >= 8 and len(prefix.split()) >= 5)):
+        return line[m.start() :].lstrip()
+    return line
+
+
+def fix_ocr_spacing(text: str) -> tuple[str, dict]:
+    """
+    Repair common OCR spacing artifacts while keeping multilingual mixed text readable.
+    """
+    stats = {
+        "cjk_join": 0,
+        "punct_close_fix": 0,
+        "punct_open_fix": 0,
+        "ascii_punct_fix": 0,
+        "ascii_word_join": 0,
+    }
+    out = text
+
+    # 1) Chinese character spacing: "神 经 科 学" -> "神经科学"
+    out, n1 = re.subn(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", out)
+    stats["cjk_join"] += n1
+
+    # 2) Space before/after Chinese punctuation.
+    out, n2 = re.subn(rf"\s+([{re.escape(CJK_PUNCT_CLOSE)}])", r"\1", out)
+    out, n3 = re.subn(rf"([{re.escape(CJK_PUNCT_OPEN)}])\s+", r"\1", out)
+    stats["punct_close_fix"] += n2
+    stats["punct_open_fix"] += n3
+
+    # 2.1) ASCII punctuation spacing around Chinese context: "合作 , 研究" -> "合作,研究"
+    out, n4 = re.subn(r"\s+([,.;:!?])", r"\1", out)
+    out, n5 = re.subn(r"([,.;:!?])\s+(?=[\u4e00-\u9fff])", r"\1", out)
+    stats["ascii_punct_fix"] += (n4 + n5)
+
+    # 3) Broken ASCII words from OCR: "N e u r o n" -> "Neuron"
+    #    Only merge a run with >=3 letters to reduce false merges.
+    def _merge_ascii_seq(match: re.Match[str]) -> str:
+        seq = match.group(0)
+        letters = re.findall(r"[A-Za-z]", seq)
+        if len(letters) < 3:
+            return seq
+        stats["ascii_word_join"] += seq.count(" ")
+        return "".join(letters)
+
+    out = re.sub(r"(?:[A-Za-z]\s+){2,}[A-Za-z]", _merge_ascii_seq, out)
+
+    # 4) Final newline compaction after join operations.
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out, stats
+
+
+def split_paragraphs(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        cur = lines[i]
+        if not cur:
+            if out and out[-1] != "":
+                out.append("")
+            i += 1
+            continue
+
+        merged = cur
+        j = i + 1
+        while j < len(lines) and lines[j]:
+            nxt = lines[j]
+            if (
+                merged
+                and merged[-1] not in PUNCT_END
+                and len(merged) < 280
+                and not re.match(r"^([\-•·\d]+[\).、．\.]?\s+)", nxt)
+            ):
+                merged += " " + nxt
+                j += 1
+            else:
+                break
+        out.append(merged)
+        i = j
+
+    text = "\n".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return [x for x in text.split("\n")]
+
+
+def is_noise_line(line: str) -> bool:
+    if not line:
+        return False
+    low = line.lower()
+    if "document generated by anna" in low:
+        return True
+    if "annas-blog.org" in low:
+        return True
+    if re.fullmatch(r"[\W_/|\\=~`*•·…-]+", line):
+        return True
+    if re.fullmatch(r"\d{1,4}", line):
+        return True
+    if re.fullmatch(r"第\s*\d+\s*页", line):
+        return True
+    if len(line) <= 1 and line not in {"。", "."}:
+        return True
+    return False
+
+
+def trim_references(text: str) -> tuple[str, bool]:
+    lines = text.splitlines()
+    markers = [
+        re.compile(r"^(参考文献|参\s*考\s*文\s*献)\s*$", re.IGNORECASE),
+        re.compile(r"^(references|bibliography)\b", re.IGNORECASE),
+    ]
+    start_idx = int(len(lines) * 0.4)
+    for idx in range(start_idx, len(lines)):
+        ln = lines[idx].strip()
+        if len(ln) <= 40 and any(m.search(ln.lower()) for m in markers):
+            return "\n".join(lines[:idx]).strip(), True
+    return text.strip(), False
+
+
+def extract_pages(obj: dict) -> list[dict]:
+    merged = obj.get("extract", {}).get("merged", {})
+    pages = merged.get("page_texts") or []
+    if pages:
+        return [{"page_id": int(p.get("page_id", i + 1)), "text": p.get("text", "")} for i, p in enumerate(pages)]
+
+    text = merged.get("text", "") or ""
+    if not text.strip():
+        return []
+
+    # Fallback: parse [PAGE n] blocks
+    out: list[dict] = []
+    parts = re.split(r"\[PAGE\s+(\d+)\]", text)
+    if len(parts) > 1:
+        for i in range(1, len(parts), 2):
+            pid = int(parts[i])
+            body = parts[i + 1] if i + 1 < len(parts) else ""
+            out.append({"page_id": pid, "text": body.strip()})
+    else:
+        out.append({"page_id": 1, "text": text})
+    return out
+
+
+def clean_one(doc_path: Path, out_docs: Path, min_clean_chars: int) -> CleanResult:
+    obj = json.loads(doc_path.read_text(encoding="utf-8"))
+    doc_id = obj.get("doc_id")
+    rel = obj.get("relative_path")
+    group = obj.get("source_group")
+    file_type = obj.get("file_type")
+
+    try:
+        pages = extract_pages(obj)
+        raw_text = obj.get("extract", {}).get("merged", {}).get("text", "") or ""
+        raw_chars = len(raw_text)
+
+        if not pages:
+            return CleanResult(doc_id, rel, group, file_type, "error", "no_pages", raw_chars, 0, 0, "unknown", ["no_pages"])
+
+        # Per-page normalization and line filtering
+        page_lines: dict[int, list[str]] = {}
+        all_short_lines: list[str] = []
+        noisy_lines_removed = 0
+        for p in pages:
+            pid = int(p["page_id"])
+            raw_lines = p.get("text", "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            lines: list[str] = []
+            for raw in raw_lines:
+                ln = trim_garbled_prefix(normalize_line(raw))
+                if not ln:
+                    continue
+                if is_noise_line(ln):
+                    continue
+                if is_noisy_ocr_line(ln):
+                    noisy_lines_removed += 1
+                    continue
+                lines.append(ln)
+            page_lines[pid] = lines
+            all_short_lines.extend([x for x in lines if 0 < len(x) <= 60])
+
+        # Remove repeated headers/footers
+        c = Counter(all_short_lines)
+        repeat_threshold = max(6, int(len(pages) * 0.35))
+        repeated = {k for k, v in c.items() if v >= repeat_threshold}
+
+        clean_pages: list[dict] = []
+        for p in pages:
+            pid = int(p["page_id"])
+            lines = [x for x in page_lines.get(pid, []) if x not in repeated]
+            lines = split_paragraphs(lines)
+            ptxt = "\n".join([x for x in lines if x is not None]).strip()
+            clean_pages.append({"page_id": pid, "text": ptxt})
+
+        full = "\n\n".join([f"[PAGE {p['page_id']}]\n{p['text']}" for p in clean_pages if p["text"].strip()])
+        full, spacing_fix = fix_ocr_spacing(full)
+        full, ref_trimmed = trim_references(full)
+        full = re.sub(r"\n{3,}", "\n\n", full).strip()
+
+        clean_chars = len(full)
+        flags: list[str] = []
+        low = full.lower()
+        if "document generated by anna" in low:
+            flags.append("metadata_left")
+        if clean_chars < min_clean_chars:
+            flags.append("too_short")
+        if re.search(r"\[PAGE\s+\d+\]\s*$", full):
+            flags.append("empty_tail_page")
+        if ref_trimmed:
+            flags.append("references_trimmed")
+
+        payload = {
+            "doc_id": doc_id,
+            "relative_path": rel,
+            "source_group": group,
+            "file_type": file_type,
+            "clean": {
+                "language": detect_language(full),
+                "text": full,
+                "page_texts": clean_pages,
+                "stats": {
+                    "raw_chars": raw_chars,
+                    "clean_chars": clean_chars,
+                    "pages": len(clean_pages),
+                    "repeated_lines_removed": len(repeated),
+                    "noisy_lines_removed": noisy_lines_removed,
+                    "references_trimmed": ref_trimmed,
+                    "ocr_spacing_fixes": spacing_fix,
+                },
+                "flags": flags,
+            },
+            "status": "ok",
+            "error": None,
+        }
+        (out_docs / f"{doc_id}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        return CleanResult(doc_id, rel, group, file_type, "ok", None, raw_chars, clean_chars, len(clean_pages), payload["clean"]["language"], flags)
+    except Exception as e:
+        return CleanResult(doc_id, rel, group, file_type, "error", str(e), 0, 0, 0, "unknown", ["exception"])
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Clean extracted corpus JSON files")
+    ap.add_argument("--input", default="data/processed/extract_raw_full")
+    ap.add_argument("--output", default="data/processed/cleaned_full")
+    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--min-clean-chars", type=int, default=800)
+    args = ap.parse_args()
+
+    in_root = Path(args.input).resolve()
+    out_root = Path(args.output).resolve()
+    in_docs = in_root / "docs"
+    out_docs = out_root / "docs"
+    out_reports = out_root / "reports"
+    out_docs.mkdir(parents=True, exist_ok=True)
+    out_reports.mkdir(parents=True, exist_ok=True)
+
+    docs = sorted(in_docs.glob("*.json"))
+    if args.limit > 0:
+        docs = docs[: args.limit]
+    if not docs:
+        print("No input docs found")
+        return 1
+
+    results: list[CleanResult] = []
+    print(f"Found {len(docs)} extracted docs")
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
+        futs = [ex.submit(clean_one, p, out_docs, args.min_clean_chars) for p in docs]
+        for i, fut in enumerate(as_completed(futs), start=1):
+            results.append(fut.result())
+            if i % 20 == 0 or i == len(docs):
+                ok = sum(1 for r in results if r.status == "ok")
+                err = len(results) - ok
+                print(f"[{i}/{len(docs)}] ok={ok} err={err}")
+
+    results.sort(key=lambda x: x.relative_path)
+    (out_root / "manifest.jsonl").write_text(
+        "\n".join(json.dumps(r.__dict__, ensure_ascii=False) for r in results) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = {
+        "total": len(results),
+        "ok": sum(1 for r in results if r.status == "ok"),
+        "error": sum(1 for r in results if r.status != "ok"),
+        "avg_clean_chars": int(sum(r.clean_chars for r in results if r.status == "ok") / max(1, sum(1 for r in results if r.status == "ok"))),
+        "generated_at_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+    }
+    (out_root / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False))
+    print(f"manifest: {out_root / 'manifest.jsonl'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

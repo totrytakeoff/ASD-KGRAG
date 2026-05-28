@@ -1,0 +1,18 @@
+
+data/
+
+# Local environments
+.venv/
+.venv_*/
+.venv-*/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local/session artifacts
+ASD-KGRAG.context.md
+*.log

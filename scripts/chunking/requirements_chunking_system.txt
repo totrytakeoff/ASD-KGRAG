@@ -1,0 +1,3 @@
+# Chunking stage runtime requirements
+# Python stdlib only (no third-party pip dependencies required).
+# Recommended: Python >= 3.10

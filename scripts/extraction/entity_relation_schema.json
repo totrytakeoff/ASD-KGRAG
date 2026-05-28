@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "entity_types": [
+    "Condition",
+    "Symptom",
+    "AssessmentTool",
+    "Intervention",
+    "Mechanism",
+    "Comorbidity",
+    "AgeStage",
+    "Setting",
+    "Risk",
+    "Evidence",
+    "Claim",
+    "Task"
+  ],
+  "relation_types": [
+    "MEASURED_BY",
+    "INDICATED_FOR",
+    "NOT_INDICATED_FOR",
+    "SUITABLE_AGE",
+    "SUITABLE_SETTING",
+    "HAS_RISK",
+    "COMORBID_WITH",
+    "SUPPORTED_BY"
+  ],
+  "required_entity_fields": [
+    "entity_id",
+    "name",
+    "type",
+    "description",
+    "synonyms"
+  ],
+  "required_relation_fields": [
+    "relation_id",
+    "src_entity_id",
+    "relation_type",
+    "dst_entity_id",
+    "evidence_text",
+    "confidence"
+  ],
+  "required_evidence_fields": [
+    "evidence_id",
+    "doc_id",
+    "chunk_id",
+    "title",
+    "year",
+    "source_type",
+    "evidence_level"
+  ]
+}
