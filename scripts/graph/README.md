@@ -52,3 +52,33 @@ cypher-shell -u neo4j -p '<password>' -f validation_queries.cypher
 Note: the loader uses `apoc.merge.relationship` to preserve extracted relation
 types such as `MEASURED_BY`, `INDICATED_FOR`, and `COMORBID_WITH`. Enable APOC in
 the target Neo4j instance before running it.
+
+## Local Docker Neo4j
+
+This repository includes a local Neo4j Compose file with APOC enabled:
+
+```bash
+docker compose -f docker-compose.neo4j.yml up -d
+```
+
+Browser:
+
+- http://localhost:7474
+- user: `neo4j`
+- password: `asd-kgrag-local`
+
+Run the current loader:
+
+```bash
+docker exec -i asd-kgrag-neo4j cypher-shell \
+  -u neo4j -p asd-kgrag-local \
+  < data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/load_current.cypher
+```
+
+Run validation queries:
+
+```bash
+docker exec -i asd-kgrag-neo4j cypher-shell \
+  -u neo4j -p asd-kgrag-local \
+  < data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/validation_queries.cypher
+```

@@ -51,6 +51,7 @@
 - `scripts/extraction/run_full_extraction_batches.sh`
 - `scripts/extraction/rerun_timeouts_and_merge.sh`
 - `scripts/extraction/entity_relation_schema.json`
+- `docker-compose.neo4j.yml`
 
 推荐推进命令：
 
