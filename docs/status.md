@@ -1,6 +1,6 @@
 # 项目状态记录
 
-更新时间：2026-05-27
+更新时间：2026-05-29
 
 ## 当前阶段
 
@@ -24,7 +24,7 @@
 
 `项目已从 pilot 质量收敛阶段，进入“7568 条主干 chunk 的批量抽取、错误重跑、合并、归一化和导图”阶段。`
 
-由于当前模型接口窗口 timeout/SSL 错误偏多，已并行推进不依赖 LLM 的 Neo4j 实入库准备与本地验证。
+由于当前模型接口窗口 timeout/SSL 错误偏多，已并行推进不依赖 LLM 的 Neo4j 实入库准备与本地验证；本地 Neo4j 入库已跑通，当前主卡点集中在真实 LLM 抽取吞吐。
 
 ## 已完成工作
 
@@ -101,11 +101,16 @@
   - `LLM_BASE_URL`
   - `LLM_API_KEY`
   - `LLM_MODEL`
+  - `LLM_MAX_TOKENS`
+  - `LLM_RESPONSE_FORMAT`
 - 已加入：
   - 类型纠偏
   - 关系合法性校验
   - 弱证据过滤
   - 请求重试与退避
+  - socket timeout / SSL EOF / HTTP 连接异常重试覆盖
+  - OpenAI-compatible `response_format` 可关闭入口
+  - 输出 `max_tokens` 可配置入口
   - 每条结果即时落盘
   - `resume` 断点续跑
   - `start-index` 分段切片运行
@@ -146,8 +151,11 @@
 - 最近一轮 25 条小批次受接口影响较大，新增结果中 timeout/SSL 错误偏多
 - 已对 timeout 队列做一轮小批次 retry，回收效果有限：`11` 条 retry 中 `6` 条成功、`5` 条仍错误；纳入合并后总成功数净增 `1`
 - 为平衡质量与效率，已新增吞吐模式：`MODE=throughput bash scripts/extraction/run_next_extraction_batch.sh`
+- 吞吐模式现默认使用轻量 prompt：`scripts/extraction/entity_relation_system_prompt_v6_light.txt`
+- 吞吐模式现默认传入 `MAX_TOKENS=1200`，可通过环境变量覆盖
 - 最近两轮吞吐模式分别覆盖 `24` 条和 `16` 条；后一轮 `7` 条成功、`9` 条错误。当前接口状态偏慢，吞吐模式仍适合避免停滞，但成功率会下降
 - 最近一轮吞吐模式继续尝试 `10` 条后人工停止，`10` 条均为 timeout/connection 错误；当前接口窗口不适合继续硬跑模型请求
+- 2026-05-29 轻量 prompt 探针：3 条真实中等 chunk 中 `1` 条成功、`2` 条 timeout；随后单条 `35-45s` 探针仍 timeout，说明 API/key/url/model 可用但当前真实抽取延迟窗口仍偏差
 - 已清理可再生/过期中间产物：非重校验 `current` 图谱导出、`partial372` 归一化和 Neo4j 导出、Python `__pycache__`
 - 已建立 git 基线提交：`1476018`，并提交 `run_next_extraction_batch.sh` 可执行权限修正：`d1f2661`
 
@@ -253,6 +261,15 @@ Neo4j 实入库准备：
   - 以小批次继续推进主干抽取
   - 支持外层 timeout，避免慢接口拖住整轮执行
   - 支持 `MODE=balanced` 与 `MODE=throughput`
+  - `MODE=throughput` 默认使用 v6 轻量 prompt 和 `MAX_TOKENS=1200`
+
+本轮新增：
+
+- `scripts/extraction/entity_relation_system_prompt_v6_light.txt`
+  - 面向吞吐推进的轻量 prompt
+  - 限制每 chunk 候选实体/关系数量
+  - 强调只保留参与高置信关系的实体
+  - 保留对研究模态、算法类工具、review-summary 弱证据的负向约束
 
 本轮规则修正：
 
@@ -263,10 +280,10 @@ Neo4j 实入库准备：
 
 ## 当前问题与卡点
 
-当前不是基础链路卡住，而是批量生产阶段的同步和稳定性问题：
+当前不是基础链路卡住，而是批量生产阶段的吞吐和稳定性问题：
 
-1. 主干抽取已继续推进，但合并文件、归一化产物、Neo4j 导出产物尚未同步到最新进度
-2. 第三方模型接口仍有明显网络错误，包括 timeout、SSL EOF、远端关闭连接等
+1. 主干抽取已推进到 `815` 条尝试记录，当前 `merged -> revalidated -> normalized -> neo4j_import -> Neo4j load` 已同步到这一基线
+2. 第三方模型接口仍有明显网络错误和长延迟，包括 timeout、SSL EOF、远端关闭连接等；轻量 prompt 能降低输出负担，但不能完全抵消当前接口窗口慢的问题
 3. 少量 JSON 解析错误和 `list index out of range` 需要在后续错误重跑或脚本健壮性中处理
 4. `MEASURED_BY` 仍是最敏感关系类型，需要在批量结果中持续抽样复核
 5. `illegal_relation_pair` warning 数量较高，说明模型仍会提出一批非法边，但当前校验层已能过滤
@@ -308,6 +325,13 @@ Neo4j 实入库准备：
 4. 推荐命令：
    - 吞吐推进：`MODE=throughput bash scripts/extraction/run_next_extraction_batch.sh`
    - 稳健推进：`MODE=balanced bash scripts/extraction/run_next_extraction_batch.sh`
+5. 模型调用配置入口：
+   - URL：`LLM_BASE_URL`
+   - API key：`LLM_API_KEY`
+   - 模型名：`LLM_MODEL`
+   - 输出上限：`MAX_TOKENS` 或 `LLM_MAX_TOKENS`
+   - prompt：`SYSTEM_PROMPT`
+   - JSON mode：`RESPONSE_FORMAT` 或 `LLM_RESPONSE_FORMAT`
 
 ## 下一步开发路径
 
@@ -371,6 +395,8 @@ Neo4j 实入库准备：
 
 目标：完成 `A/B + 非书籍 + 去噪` 主干语料的批量抽取。
 
+状态：进行中，已新增轻量 prompt 与请求限长入口；当前建议等接口延迟恢复后继续小批次推进。
+
 相关脚本：
 
 - `scripts/extraction/run_full_extraction_batches.sh`
@@ -379,6 +405,9 @@ Neo4j 实入库准备：
 建议策略：
 
 - 继续 `resume + start-index` 分段推进
+- 接口慢时使用 `MODE=throughput BATCH_SIZE=10-25 REQUEST_TIMEOUT=60 MAX_RETRIES=0`
+- 接口恢复时使用 `MODE=throughput BATCH_SIZE=50` 扩大覆盖
+- 集中 retry 时使用 `scripts/extraction/rerun_timeouts_and_merge.sh`，并保留 `MAX_TOKENS=1200`
 - 每增加一批后执行一次 retry
 - 每阶段重新 merge
 - 周期性跑 normalization 和 Neo4j export
@@ -432,8 +461,8 @@ Neo4j 实入库准备：
 6. 进行中：用 `scripts/extraction/run_next_extraction_batch.sh` 小批次继续推进主干抽取，当前优先 `MODE=throughput`
 7. 下一步：对 timeout/error 执行 `rerun_timeouts_and_merge.sh`
 8. 下一步：每个阶段重新 revalidate、normalize、export、summarize
-9. 主干抽取稳定后再进入 Neo4j 实入库和 embedding
+9. Neo4j 当前基线已入库验证；主干抽取覆盖率进一步提升后，再进入 embedding 与 KGRAG 查询原型
 
 ## 当前结论
 
-`前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通；已同步并重校验当前 815 条主干抽取结果。当前模型接口 timeout/SSL 错误偏多，最近一轮吞吐尝试全部失败；建议暂停硬跑模型请求，待接口状态恢复后再用 MODE=throughput 提高覆盖率，并在接口状态较好时集中执行 timeout retry。每个阶段仍按 revalidate、normalize、export、summarize 固定链路刷新。`
+`前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通；已同步并重校验当前 815 条主干抽取结果。本轮已补齐轻量 prompt、max_tokens、response_format 和 timeout retry 覆盖，确认当前不是配置失效，而是真实抽取请求在该接口窗口仍偏慢。下一步应在接口状态较好时继续 MODE=throughput 小批次扩大覆盖，并周期性执行 refresh_current_outputs.sh 刷新 merge、revalidate、normalize、export、summarize。`

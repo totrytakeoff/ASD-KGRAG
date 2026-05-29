@@ -65,6 +65,8 @@
 - `--api-key`：API key
 - `--site-url`：可选，请求来源站点，OpenRouter 推荐传
 - `--app-name`：可选，请求应用名
+- `--max-tokens`：可选，限制模型输出 token；默认读取 `LLM_MAX_TOKENS`，未设置则不传
+- `--response-format`：`json_object|none`；默认 `json_object`，兼容接口不稳定时可设为 `none`
 - `--limit`：仅处理前 N 个 chunk（调试用）
 
 ### 输出
@@ -80,7 +82,10 @@
   - `--base-url` / `LLM_BASE_URL`
   - `--api-key` / `LLM_API_KEY`
   - `--model` / `LLM_MODEL`
+  - `--max-tokens` / `LLM_MAX_TOKENS`
+  - `--response-format` / `LLM_RESPONSE_FORMAT`
   - 兼容读取 `OPENROUTER_API_KEY`、`OPENAI_API_KEY`
+- 模型返回 ```json 代码块或前后带少量说明文本时，脚本会尝试从响应中提取 JSON 对象。
 
 ### OpenRouter 示例
 
@@ -97,6 +102,29 @@ python scripts/extraction/extract_entities_relations.py \
   --output data/processed/extraction_pilot \
   --limit 100
 ```
+
+### 批量抽取推荐入口
+
+继续主干抽取：
+
+```bash
+MODE=throughput bash scripts/extraction/run_next_extraction_batch.sh
+```
+
+`MODE=throughput` 默认使用轻量 prompt 和输出上限：
+
+- `SYSTEM_PROMPT=scripts/extraction/entity_relation_system_prompt_v6_light.txt`
+- `MAX_TOKENS=1200`
+- `REQUEST_TIMEOUT=60`
+- `MAX_RETRIES=0`
+
+接口状态较好、需要更稳健输出时：
+
+```bash
+MODE=balanced bash scripts/extraction/run_next_extraction_batch.sh
+```
+
+`MODE=balanced` 默认保留原 prompt，不限制输出 token，并使用更长请求超时与重试。
 
 ## 4) `normalize_extractions.py`
 

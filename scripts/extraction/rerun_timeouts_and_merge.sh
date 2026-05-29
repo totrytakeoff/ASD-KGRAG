@@ -12,6 +12,9 @@ RETRY_JSONL="${RETRY_OUTPUT_DIR}/chunk_extractions.jsonl"
 
 MODEL="${LLM_MODEL:-deepseek-ai/DeepSeek-V4-Flash}"
 BASE_URL="${LLM_BASE_URL:-}"
+MAX_TOKENS="${MAX_TOKENS:-1200}"
+SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt_v6_light.txt}"
+RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
 
 python scripts/extraction/build_retry_chunks.py \
   --input "$INPUT" \
@@ -28,6 +31,7 @@ python scripts/extraction/extract_entities_relations.py \
   --backend openai \
   --model "$MODEL" \
   ${BASE_URL:+--base-url "$BASE_URL"} \
+  --system-prompt "$SYSTEM_PROMPT" \
   --site-url https://localhost \
   --app-name ASD-KGRAG \
   --input "$RETRY_INPUT" \
@@ -36,6 +40,8 @@ python scripts/extraction/extract_entities_relations.py \
   --sleep-seconds 0.05 \
   --max-retries 5 \
   --retry-sleep-seconds 8 \
+  --max-tokens "$MAX_TOKENS" \
+  --response-format "$RESPONSE_FORMAT" \
   --summary-every 5
 
 python scripts/extraction/merge_extraction_runs.py \

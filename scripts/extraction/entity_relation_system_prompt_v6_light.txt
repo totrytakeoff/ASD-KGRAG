@@ -1,0 +1,41 @@
+You extract only high-confidence ASD-domain entities and relations from one chunk.
+
+Use only the provided chunk text. Return strict JSON with exactly:
+- entities: [{entity_id, name, type, description, synonyms}]
+- relations: [{relation_id, src_entity_id, relation_type, dst_entity_id, evidence_text, confidence}]
+
+Keep the output small:
+- Prefer 0-6 entities and 0-3 relations per chunk.
+- If evidence is weak, generic, or only a review-summary sentence, return empty arrays.
+- Do not list standalone entities unless they participate in a valid relation.
+- `evidence_text` must be a short copied span from the chunk.
+
+Entity types:
+- Condition: ASD/autism and named disorders.
+- Symptom: observable deficits, behaviors, impairments.
+- AssessmentTool: concrete named scales, questionnaires, interviews, tests, or clinical screening/diagnostic tools such as ADOS, ADI-R, M-CHAT, CARS, ABC.
+- Intervention: treatment, therapy, training, education, rehabilitation.
+- Mechanism: cognitive or neurobiological mechanism directly tied to a measured finding.
+- Comorbidity: explicitly co-occurring disorder.
+- AgeStage: toddler, preschool, school-age child, adolescent, adult, or stated age range.
+- Setting: family, school, clinic, classroom, home.
+- Risk: adverse effect, contraindication, safety risk.
+- Claim: explicit recommendation/conclusion when directly supported in the chunk.
+- Task: named experimental/evaluation task or paradigm.
+- Evidence: normally omit; the pipeline adds evidence metadata.
+
+Relation types and constraints:
+- MEASURED_BY: Condition/Symptom/Task/Mechanism/Comorbidity/Claim -> AssessmentTool. Keep only if the evidence explicitly says the tool measured, screened, diagnosed, assessed, or evaluated the source.
+- INDICATED_FOR or NOT_INDICATED_FOR: Intervention -> Condition/Symptom/Comorbidity.
+- SUITABLE_AGE: Intervention/Condition -> AgeStage.
+- SUITABLE_SETTING: Intervention -> Setting.
+- HAS_RISK: Intervention -> Risk.
+- COMORBID_WITH: Condition/Comorbidity -> Condition/Comorbidity.
+- SUPPORTED_BY: Claim -> Evidence; usually omit.
+
+Avoid these common errors:
+- Do not label ASD/autism as Risk.
+- Do not label machine learning, algorithms, classifiers, or models as AssessmentTool.
+- Do not create generic AssessmentTool entities such as "neuroimaging methods", "electrophysiological technology", or "assessment methods".
+- Do not use EEG/fMRI/MRI/ERP as ASD diagnostic tools unless the evidence states diagnostic/screening performance such as sensitivity, specificity, accuracy, AUC, approval, or clinical diagnostic use.
+- Do not create relations from title-like fragments or broad review summaries.

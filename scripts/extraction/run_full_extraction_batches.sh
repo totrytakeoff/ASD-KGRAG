@@ -9,6 +9,9 @@ MAX_RETRIES="${MAX_RETRIES:-4}"
 RETRY_SLEEP="${RETRY_SLEEP:-5}"
 REQUEST_SLEEP="${REQUEST_SLEEP:-0.05}"
 SUMMARY_EVERY="${SUMMARY_EVERY:-10}"
+MAX_TOKENS="${MAX_TOKENS:-0}"
+SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt.txt}"
+RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
 
 if [[ -z "${LLM_API_KEY:-}" ]]; then
   echo "LLM_API_KEY is not set" >&2
@@ -28,6 +31,7 @@ while [[ "$START" -lt "$TOTAL" ]]; do
     --backend openai \
     --model "$MODEL" \
     ${BASE_URL:+--base-url "$BASE_URL"} \
+    --system-prompt "$SYSTEM_PROMPT" \
     --site-url https://localhost \
     --app-name ASD-KGRAG \
     --input "$INPUT" \
@@ -39,6 +43,8 @@ while [[ "$START" -lt "$TOTAL" ]]; do
     --sleep-seconds "$REQUEST_SLEEP" \
     --max-retries "$MAX_RETRIES" \
     --retry-sleep-seconds "$RETRY_SLEEP" \
+    --max-tokens "$MAX_TOKENS" \
+    --response-format "$RESPONSE_FORMAT" \
     --summary-every "$SUMMARY_EVERY"
   START=$((START + BATCH_SIZE))
 done

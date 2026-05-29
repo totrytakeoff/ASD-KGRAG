@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
+import socket
+import ssl
 import time
 import urllib.parse
 import urllib.error
@@ -94,6 +97,34 @@ def resolve_model(args: argparse.Namespace) -> str:
     return args.model or os.environ.get("LLM_MODEL") or "gpt-4.1-mini"
 
 
+def parse_model_json(content: str) -> dict:
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("empty model response")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        fenced = "\n".join(lines).strip()
+        try:
+            return json.loads(fenced)
+        except json.JSONDecodeError:
+            text = fenced
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        return json.loads(text[start : end + 1])
+    return json.loads(text)
+
+
 def call_openai_compatible(
     model: str,
     messages: list[dict],
@@ -104,6 +135,8 @@ def call_openai_compatible(
     timeout_seconds: float,
     max_retries: int,
     retry_sleep_seconds: float,
+    max_tokens: int,
+    response_format: str,
 ) -> dict:
     normalized_base = base_url.rstrip("/")
     if normalized_base.endswith("/chat/completions"):
@@ -114,9 +147,12 @@ def call_openai_compatible(
     body = {
         "model": model,
         "messages": messages,
-        "response_format": {"type": "json_object"},
         "temperature": 0,
     }
+    if response_format == "json_object":
+        body["response_format"] = {"type": "json_object"}
+    if max_tokens > 0:
+        body["max_tokens"] = max_tokens
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -125,14 +161,15 @@ def call_openai_compatible(
         headers["HTTP-Referer"] = site_url
     if app_name:
         headers["X-Title"] = app_name
-    req = urllib.request.Request(
-        chat_url,
-        data=json.dumps(body).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
+    request_data = json.dumps(body).encode("utf-8")
     attempt = 0
     while True:
+        req = urllib.request.Request(
+            chat_url,
+            data=request_data,
+            headers=headers,
+            method="POST",
+        )
         try:
             with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
@@ -145,14 +182,22 @@ def call_openai_compatible(
                 attempt += 1
                 continue
             raise RuntimeError(f"OpenAI-compatible API error: {exc.code} {detail}") from exc
-        except urllib.error.URLError as exc:
+        except (
+            TimeoutError,
+            socket.timeout,
+            ConnectionError,
+            ConnectionResetError,
+            http.client.HTTPException,
+            ssl.SSLError,
+            urllib.error.URLError,
+        ) as exc:
             if attempt < max_retries:
                 time.sleep(retry_sleep_seconds * (attempt + 1))
                 attempt += 1
                 continue
             raise RuntimeError(f"OpenAI-compatible API network error: {exc}") from exc
     content = payload["choices"][0]["message"]["content"]
-    return json.loads(content)
+    return parse_model_json(content)
 
 
 def validate_record(record: dict, schema: dict) -> tuple[list[dict], list[dict], list[str]]:
@@ -627,6 +672,12 @@ def main() -> int:
     ap.add_argument("--request-timeout", type=float, default=120.0)
     ap.add_argument("--max-retries", type=int, default=2)
     ap.add_argument("--retry-sleep-seconds", type=float, default=3.0)
+    ap.add_argument("--max-tokens", type=int, default=int(os.environ.get("LLM_MAX_TOKENS", "0") or "0"))
+    ap.add_argument(
+        "--response-format",
+        choices=["json_object", "none"],
+        default=os.environ.get("LLM_RESPONSE_FORMAT") or "json_object",
+    )
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--summary-every", type=int, default=50)
     args = ap.parse_args()
@@ -663,6 +714,9 @@ def main() -> int:
         "backend": args.backend,
         "model": model if args.backend == "openai" else None,
         "base_url": base_url if args.backend == "openai" else None,
+        "system_prompt": str(Path(args.system_prompt).resolve()),
+        "max_tokens": args.max_tokens if args.max_tokens > 0 else None,
+        "response_format": args.response_format,
         "output": str(out_jsonl),
         "resume": args.resume,
         "start_index": args.start_index,
@@ -688,6 +742,8 @@ def main() -> int:
                         timeout_seconds=args.request_timeout,
                         max_retries=args.max_retries,
                         retry_sleep_seconds=args.retry_sleep_seconds,
+                        max_tokens=args.max_tokens,
+                        response_format=args.response_format,
                     )
                     if args.sleep_seconds > 0:
                         time.sleep(args.sleep_seconds)

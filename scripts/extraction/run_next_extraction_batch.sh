@@ -12,6 +12,9 @@ if [[ "$MODE" == "throughput" ]]; then
   MAX_RETRIES="${MAX_RETRIES:-0}"
   RETRY_SLEEP="${RETRY_SLEEP:-2}"
   SUMMARY_EVERY="${SUMMARY_EVERY:-10}"
+  MAX_TOKENS="${MAX_TOKENS:-1200}"
+  SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt_v6_light.txt}"
+  RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
 elif [[ "$MODE" != "balanced" ]]; then
   echo "unknown MODE=${MODE}; expected balanced or throughput" >&2
   exit 1
@@ -22,6 +25,9 @@ else
   MAX_RETRIES="${MAX_RETRIES:-2}"
   RETRY_SLEEP="${RETRY_SLEEP:-5}"
   SUMMARY_EVERY="${SUMMARY_EVERY:-5}"
+  MAX_TOKENS="${MAX_TOKENS:-0}"
+  SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt.txt}"
+  RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
 fi
 REQUEST_SLEEP="${REQUEST_SLEEP:-0.05}"
 
@@ -77,6 +83,7 @@ timeout "${TIMEOUT_SECONDS}s" python scripts/extraction/extract_entities_relatio
   --backend openai \
   --model "$MODEL" \
   ${BASE_URL:+--base-url "$BASE_URL"} \
+  --system-prompt "$SYSTEM_PROMPT" \
   --site-url https://localhost \
   --app-name ASD-KGRAG \
   --input "$INPUT" \
@@ -88,4 +95,6 @@ timeout "${TIMEOUT_SECONDS}s" python scripts/extraction/extract_entities_relatio
   --sleep-seconds "$REQUEST_SLEEP" \
   --max-retries "$MAX_RETRIES" \
   --retry-sleep-seconds "$RETRY_SLEEP" \
+  --max-tokens "$MAX_TOKENS" \
+  --response-format "$RESPONSE_FORMAT" \
   --summary-every "$SUMMARY_EVERY"
