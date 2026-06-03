@@ -1,6 +1,6 @@
 # 项目状态记录
 
-更新时间：2026-05-29
+更新时间：2026-06-03
 
 ## 当前阶段
 
@@ -431,7 +431,7 @@ Neo4j 实入库准备：
 6. 已完成：执行 `validation_queries.cypher` 验证核心问题能查到合理子图
 7. 下一步：基于验证查询结果继续抽样清理研究模态类 `MEASURED_BY` 噪声
 
-### 第 6 步：embedding 与向量库
+### 第 6 步：embedding 与向量库（进行中）
 
 前置条件：
 
@@ -443,6 +443,21 @@ Neo4j 实入库准备：
 - chunk text embedding
 - entity card embedding
 - relation/evidence summary embedding
+当前进展：
+
+- 已创建 scripts/embedding/ 模块目录和设计文档
+- 选定向量库：Qdrant（Docker 部署，与 Neo4j 并列）
+- 选定 embedding 模型：sentence-transformers/all-MiniLM-L6-v2（384 维，CPU 可跑）
+- 正在安装依赖：sentence-transformers、qdrant-client
+- docs/guide.md 已补充 6.3 节向量库技术选型说明
+- 下一步：实现 embed_chunks.py，启动 Qdrant Docker，完成 7568 条 chunk 嵌入写入
+
+向量库选型理由：
+
+- Neo4j 负责结构化图查询（路径遍历、子图过滤），Qdrant 负责语义相似度搜索（ANN）
+- 两者分工不同，不能互相替代；具体说明见 docs/guide.md 6.3 节
+- 备选方案如需简化部署，可切换到 Neo4j 内置向量索引
+
 
 此阶段之后再进入：
 
@@ -465,4 +480,4 @@ Neo4j 实入库准备：
 
 ## 当前结论
 
-`前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通；已同步并重校验当前 815 条主干抽取结果。本轮已补齐轻量 prompt、max_tokens、response_format 和 timeout retry 覆盖，确认当前不是配置失效，而是真实抽取请求在该接口窗口仍偏慢。下一步应在接口状态较好时继续 MODE=throughput 小批次扩大覆盖，并周期性执行 refresh_current_outputs.sh 刷新 merge、revalidate、normalize、export、summarize。`
+前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通。当前进入 embedding 与向量库搭建阶段（Qdrant + all-MiniLM-L6-v2），同时继续推进 LLM 抽取（受接口延迟限制，待窗口恢复后用 MODE=throughput 小批次推进）。两条线并行：embedding 不依赖 LLM 调用，可先行完成；抽取在接口可用时继续。

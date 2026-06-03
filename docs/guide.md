@@ -252,6 +252,33 @@ data/
 
 > 关键点： **图与向量必须用 ID 绑定** ，否则你无法做“图先行，再局部向量检索”。
 
+## 6.3 向量库技术选型
+
+### 为什么不能只靠 Neo4j？
+
+Neo4j 擅长结构化图查询（路径遍历、子图过滤、证据等级筛选），但**不擅长语义相似度搜索**——即这段查询和哪些 chunk 意思最接近。即使 Neo4j 5.x 加了向量索引，其 ANN 性能、可调性和生态成熟度也不如专用向量引擎。KGRAG 架构要求图先行、向量在范围内精排，两者分工不同、不能互相替代。
+
+### 推荐：Qdrant
+
+- 轻量 Docker 部署，与现有 Neo4j Compose 并列
+- HNSW 索引，过滤 + 向量联合查询，Python client 成熟
+- 7K 级数据秒级响应，百万级也无压力
+- LangChain / LlamaIndex 均有官方集成
+
+### 备选：Neo4j 内置向量索引
+
+- 优点：少一个服务，Cypher 内直接做向量查询
+- 缺点：HNSW 参数可调性弱、ANN 性能不如专用引擎
+- 适合：极简部署或数据量小的场景
+
+### Embedding 模型推荐
+
+- 起点：all-MiniLM-L6-v2（384 维，CPU 可跑，中英文基本覆盖）
+- 中文升级：bge-small-zh-v1.5（512 维，中文优化）
+- 远程 API：SiliconFlow / OpenAI embedding endpoint（省本地资源但依赖网络）
+
+详细设计见 scripts/embedding/README.md。
+
 ---
 
 # 7) 在线 KGRAG：LangChain + LangGraph 的查询流程（你们论文同款）

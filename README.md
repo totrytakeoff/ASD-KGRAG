@@ -2,7 +2,7 @@
 
 当前状态：
 - 项目已完成原始提取、清洗、分块、元数据补全、实体关系抽取 pilot、归一化和 Neo4j CSV 导出验证。
-- 当前处于 `7568` 条高价值主干 chunk 的批量实体关系抽取阶段；本地 Neo4j 入库验证已跑通，当前主要卡点是第三方模型接口在真实抽取任务上的长延迟/timeout。
+- 当前处于 embedding 与向量库搭建阶段（同时继续推进批量实体关系抽取）；本地 Neo4j 入库验证已跑通，当前主要卡点是第三方模型接口在真实抽取任务上的长延迟/timeout。
 - 最新状态记录见：`docs/status.md`
 
 数据处理文档：
@@ -22,6 +22,7 @@
 - `scripts/metadata/`
 - `scripts/chunking/`
 - `scripts/graph/`
+- `scripts/embedding/`
 
 当前离线产物：
 - `data/processed/extract_raw_full`
@@ -52,6 +53,8 @@
 - `scripts/extraction/rerun_timeouts_and_merge.sh`
 - `scripts/extraction/entity_relation_schema.json`
 - `docker-compose.neo4j.yml`
+- `scripts/embedding/`
+- `docker-compose.qdrant.yml`
 
 推荐推进命令：
 
