@@ -1,83 +1,107 @@
 # ASD-KGRAG
 
-当前状态：
-- 项目已完成原始提取、清洗、分块、元数据补全、实体关系抽取 pilot、归一化和 Neo4j CSV 导出验证。
-- 当前处于 embedding 与向量库搭建阶段（同时继续推进批量实体关系抽取）；本地 Neo4j 入库验证已跑通，当前主要卡点是第三方模型接口在真实抽取任务上的长延迟/timeout。
-- 最新状态记录见：`docs/status.md`
+ASD 领域知识图谱 RAG 系统：文档→清洗→分块→实体关系抽取→Neo4j 图谱+Qdrant 向量库→混合检索→问答。
 
-数据处理文档：
-- `docs/status.md`
-- `docs/data_process/extraction_dependencies.md`
-- `docs/data_process/extraction_summary.md`
-- `docs/data_process/requirements_extraction_system.txt`
-- `docs/data_process/extraction_sop.md`
-- `docs/data_process/graph_export_sop.md`
-- `docs/data_process/run_log_template.md`
-- `docs/data_process/source_metadata_sop.md`
+## 当前进度
 
-脚本与依赖：
-- `scripts/extraction/`
-- `scripts/extraction/requirements_extraction_system.txt`
-- `scripts/cleaning/`
-- `scripts/metadata/`
-- `scripts/chunking/`
-- `scripts/graph/`
-- `scripts/embedding/`
+| 阶段 | 进度 |
+|------|------|
+| 数据提取 | 100% |
+| 清洗 | 100% |
+| 分块 | 100% |
+| 元数据补全 | 100% |
+| 实体关系抽取 | 8% (616/7568) |
+| 归一化+Neo4j 入库 | 100% |
+| Embedding+Qdrant | 100% |
+| 混合检索原型 | 100% |
+| KGRAG 问答原型 | 0% |
 
-当前离线产物：
-- `data/processed/extract_raw_full`
-- `data/processed/cleaned_full`
-- `data/processed/chunks_full`
-- `data/processed/source_catalog`
-- `data/processed/chunks_extractable_full_ab_nonbook.jsonl`
-- `data/processed/extraction_full_ab_nonbook_v5`
-- `data/processed/extraction_full_ab_nonbook_v5_retry`
-- `data/processed/extraction_full_ab_nonbook_v5_merged.jsonl`
-- `data/processed/extraction_full_ab_nonbook_v5_merged_revalidated.jsonl`
-- `data/processed/extraction_full_ab_nonbook_v5_current_revalidated_report`
-- `data/processed/normalized_full_ab_nonbook_v5_partial372`
-- `data/processed/neo4j_import_full_ab_nonbook_v5_partial372`
-- `data/processed/normalized_full_ab_nonbook_v5_current_revalidated`
-- `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated`
+状态详情：`docs/status.md`
 
-下一阶段入口：
-- `scripts/extraction/run_next_extraction_batch.sh`
-- `scripts/extraction/refresh_current_outputs.sh`
-- `scripts/extraction/merge_extraction_runs.py`
-- `scripts/extraction/revalidate_extraction_run.py`
-- `scripts/extraction/summarize_extraction_run.py`
-- `scripts/extraction/extract_entities_relations.py`
-- `scripts/extraction/normalize_extractions.py`
-- `scripts/graph/export_neo4j_import.py`
-- `scripts/extraction/run_full_extraction_batches.sh`
-- `scripts/extraction/rerun_timeouts_and_merge.sh`
-- `scripts/extraction/entity_relation_schema.json`
-- `docker-compose.neo4j.yml`
-- `scripts/embedding/`
-- `docker-compose.qdrant.yml`
+## 快速启动
 
-推荐推进命令：
+--- #1 score=0.6881 ---
+  chunk_id: 0e00f768e89e6d99_c0020
+  title: Assessment of Autism Spectrum Disorder
+  year: 2023
+  evidence_level: B
+  source_type: article
+--- #2 score=0.6770 ---
+  chunk_id: 0e00f768e89e6d99_c0007
+  title: Assessment of Autism Spectrum Disorder
+  year: 2023
+  evidence_level: B
+  source_type: article
+--- #3 score=0.6552 ---
+  chunk_id: dfa342e081bd066e_c0004
+  title: Autism Spectrum Disorders in Adulthood—Symptoms, Diagnosis, and Treatment
+  year: 2024
+  evidence_level: B
+  source_type: article
+--- #4 score=0.6056 ---
+  chunk_id: a5e206dfaf35687c_c0066
+  title: 自闭症谱系障碍的早期筛查工具
+  year: 2022
+  evidence_level: B
+  source_type: article
+--- #5 score=0.5892 ---
+  chunk_id: a5e206dfaf35687c_c0067
+  title: 自闭症谱系障碍的早期筛查工具
+  year: 2022
+  evidence_level: B
+  source_type: article
+graph: 8 entities, 4 relations, 115 chunks
+vector: 20 hits
 
-```bash
-MODE=throughput bash scripts/extraction/run_next_extraction_batch.sh
-```
+=== Query: ADOS自闭症诊断观察量表 ===
+Graph entities found:
+  ADOS (AssessmentTool)
+  ADOS-2 (AssessmentTool)
+  ADOS-Generic (AssessmentTool)
+  ADOS-Toddler (AssessmentTool)
+  ADOS-Toddler module (AssessmentTool)
+  Pre-linguistic ADOS (AssessmentTool)
+  ADOS (AssessmentTool)
+  ADOS-2 (AssessmentTool)
 
-吞吐模式用于优先扩大主干覆盖；失败 chunk 后续集中 retry。
+Graph relations:
+  [ent_c423ff86e708]-MEASURED_BY->孤独症 (Condition)
+  [ent_aa708b928f94]-MEASURED_BY->孤独症 (Condition)
+  [ent_8aa094954adc]-MEASURED_BY->孤独症 (Condition)
+  [ent_ee6cb69c2135]-MEASURED_BY->孤独症 (Condition)
 
-模型调用配置入口：
+Merged results (top 10):
+  1. [V]   score=0.4567 evid=B 自闭症谱系障碍的早期筛查工具
+  2. [V]   score=0.4292 evid=B 国内同伴介入法提升孤独症儿童社交能力的研究现状与展望
+  3. [V]   score=0.4277 evid=B 自闭症谱系障碍的早期筛查工具
+  4. [V]   score=0.4234 evid=B 国内同伴介入法提升孤独症儿童社交能力的研究现状与展望
+  5. [V]   score=0.4190 evid=B 近十年国际孤独症早期干预研究热点——基于Web of Science期刊文献的可视化分析
+  6. [V]   score=0.4180 evid=B 自闭症谱系障碍的早期筛查工具
+  7. [V]   score=0.4160 evid=B 婴幼儿早期神经发育障碍的研究进展
+  8. [V]   score=0.4148 evid=B 儿童孤独症谱系障碍医学治疗与教育干预综述
+  9. [V]   score=0.4009 evid=B 自闭症谱系障碍的社会功能障碍：触觉与催产素
+  10. [V]   score=0.3997 evid=B 自闭症谱系量表的理论研究与临床应用
 
-```bash
-export LLM_BASE_URL="https://api.siliconflow.cn/v1/chat/completions"
-export LLM_API_KEY="你的_key"
-export LLM_MODEL="deepseek-ai/DeepSeek-V4-Flash"
-```
+## 模型调用配置
 
-可选调优入口：
 
-```bash
-MODE=throughput \
-MAX_TOKENS=1200 \
-SYSTEM_PROMPT=scripts/extraction/entity_relation_system_prompt_v6_light.txt \
-RESPONSE_FORMAT=json_object \
-bash scripts/extraction/run_next_extraction_batch.sh
-```
+
+## 基础设施
+
+| 服务 | 端口 | 认证 |
+|------|------|------|
+| Neo4j | 7474, 7687 | neo4j / asd-kgrag-local |
+| Qdrant | 6333, 6334 | 无 |
+
+## 目录结构
+
+- `scripts/extraction/` 数据提取、实体关系抽取、归一化
+- `scripts/embedding/` embedding 写入与搜索
+- `scripts/retrieval/` 混合检索
+- `scripts/graph/` Neo4j 导出、Cypher 生成
+- `scripts/cleaning/` 数据清洗
+- `scripts/chunking/` 分块
+- `scripts/metadata/` 元数据补全
+- `docs/` 文档
+- `docker-compose.yml` Neo4j + Qdrant
+- `.venv/` Python 虚拟环境（sentence-transformers, qdrant-client, neo4j）

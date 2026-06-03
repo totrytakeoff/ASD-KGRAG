@@ -58,7 +58,7 @@ the target Neo4j instance before running it.
 This repository includes a local Neo4j Compose file with APOC enabled:
 
 ```bash
-docker compose -f docker-compose.neo4j.yml up -d
+docker compose up -d
 ```
 
 Browser:
