@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 INPUT="${1:-data/processed/chunks_extractable_full_ab_nonbook.jsonl}"
 OUTPUT="${2:-data/processed/extraction_full_ab_nonbook_v5}"
 BATCH_SIZE="${BATCH_SIZE:-200}"
@@ -12,6 +19,7 @@ SUMMARY_EVERY="${SUMMARY_EVERY:-10}"
 MAX_TOKENS="${MAX_TOKENS:-0}"
 SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt.txt}"
 RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
+WORKERS="${WORKERS:-1}"
 
 if [[ -z "${LLM_API_KEY:-}" ]]; then
   echo "LLM_API_KEY is not set" >&2
@@ -45,6 +53,7 @@ while [[ "$START" -lt "$TOTAL" ]]; do
     --retry-sleep-seconds "$RETRY_SLEEP" \
     --max-tokens "$MAX_TOKENS" \
     --response-format "$RESPONSE_FORMAT" \
+  --workers "$WORKERS" \
     --summary-every "$SUMMARY_EVERY"
   START=$((START + BATCH_SIZE))
 done

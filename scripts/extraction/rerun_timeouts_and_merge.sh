@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 INPUT="${1:-data/processed/chunks_extractable_full_ab_nonbook.jsonl}"
 MAIN_OUTPUT_DIR="${2:-data/processed/extraction_full_ab_nonbook_v5}"
 RETRY_OUTPUT_DIR="${3:-data/processed/extraction_full_ab_nonbook_v5_retry}"
@@ -15,6 +22,7 @@ BASE_URL="${LLM_BASE_URL:-}"
 MAX_TOKENS="${MAX_TOKENS:-1200}"
 SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt_v6_light.txt}"
 RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
+WORKERS="${WORKERS:-1}"
 
 python scripts/extraction/build_retry_chunks.py \
   --input "$INPUT" \
@@ -42,6 +50,7 @@ python scripts/extraction/extract_entities_relations.py \
   --retry-sleep-seconds 8 \
   --max-tokens "$MAX_TOKENS" \
   --response-format "$RESPONSE_FORMAT" \
+  --workers "$WORKERS" \
   --summary-every 5
 
 python scripts/extraction/merge_extraction_runs.py \

@@ -16,3 +16,6 @@ __pycache__/
 # Local/session artifacts
 ASD-KGRAG.context.md
 *.log
+.env
+.env.*
+!.env.example

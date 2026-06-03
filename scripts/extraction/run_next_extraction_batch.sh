@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 INPUT="${1:-data/processed/chunks_extractable_full_ab_nonbook.jsonl}"
 OUTPUT="${2:-data/processed/extraction_full_ab_nonbook_v5}"
 MODE="${MODE:-balanced}"
@@ -15,6 +22,7 @@ if [[ "$MODE" == "throughput" ]]; then
   MAX_TOKENS="${MAX_TOKENS:-1200}"
   SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt_v6_light.txt}"
   RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
+  WORKERS="${WORKERS:-3}"
 elif [[ "$MODE" != "balanced" ]]; then
   echo "unknown MODE=${MODE}; expected balanced or throughput" >&2
   exit 1
@@ -28,6 +36,7 @@ else
   MAX_TOKENS="${MAX_TOKENS:-0}"
   SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt.txt}"
   RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
+  WORKERS="${WORKERS:-1}"
 fi
 REQUEST_SLEEP="${REQUEST_SLEEP:-0.05}"
 
@@ -97,4 +106,5 @@ timeout "${TIMEOUT_SECONDS}s" python scripts/extraction/extract_entities_relatio
   --retry-sleep-seconds "$RETRY_SLEEP" \
   --max-tokens "$MAX_TOKENS" \
   --response-format "$RESPONSE_FORMAT" \
+  --workers "$WORKERS" \
   --summary-every "$SUMMARY_EVERY"

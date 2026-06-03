@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import http.client
 import json
 import os
@@ -654,6 +655,76 @@ def build_stub_record(chunk: dict) -> dict:
     return {"entities": [], "relations": []}
 
 
+def process_chunk(
+    chunk: dict,
+    args: argparse.Namespace,
+    schema: dict,
+    system_prompt: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+) -> tuple[dict, int, int]:
+    try:
+        if args.backend == "stub":
+            raw = build_stub_record(chunk)
+        else:
+            raw = call_openai_compatible(
+                model,
+                build_messages(system_prompt, chunk),
+                base_url=base_url,
+                api_key=api_key,
+                site_url=args.site_url or None,
+                app_name=args.app_name or None,
+                timeout_seconds=args.request_timeout,
+                max_retries=args.max_retries,
+                retry_sleep_seconds=args.retry_sleep_seconds,
+                max_tokens=args.max_tokens,
+                response_format=args.response_format,
+            )
+            if args.sleep_seconds > 0:
+                time.sleep(args.sleep_seconds)
+
+        entities, relations, warnings = validate_record(raw, schema)
+        evidence = {
+            "evidence_id": f"{chunk['chunk_id']}_ev0",
+            "doc_id": chunk.get("doc_id"),
+            "chunk_id": chunk.get("chunk_id"),
+            "title": chunk.get("title"),
+            "year": chunk.get("year"),
+            "source_type": chunk.get("source_type"),
+            "evidence_level": chunk.get("evidence_level"),
+        }
+        record = {
+            "chunk_id": chunk.get("chunk_id"),
+            "doc_id": chunk.get("doc_id"),
+            "status": "ok",
+            "warnings": warnings,
+            "entities": entities,
+            "relations": relations,
+            "evidence": evidence,
+        }
+        return record, len(entities), len(relations)
+    except Exception as exc:
+        record = {
+            "chunk_id": chunk.get("chunk_id"),
+            "doc_id": chunk.get("doc_id"),
+            "status": "error",
+            "error": str(exc),
+            "entities": [],
+            "relations": [],
+            "evidence": {
+                "evidence_id": f"{chunk['chunk_id']}_ev0",
+                "doc_id": chunk.get("doc_id"),
+                "chunk_id": chunk.get("chunk_id"),
+                "title": chunk.get("title"),
+                "year": chunk.get("year"),
+                "source_type": chunk.get("source_type"),
+                "evidence_level": chunk.get("evidence_level"),
+            },
+        }
+        return record, 0, 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Extract ASD entities and relations from chunks")
     ap.add_argument("--input", default="data/processed/chunks_full/chunks.jsonl")
@@ -680,6 +751,7 @@ def main() -> int:
     )
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--summary-every", type=int, default=50)
+    ap.add_argument("--workers", type=int, default=int(os.environ.get("LLM_WORKERS", "1") or "1"))
     args = ap.parse_args()
 
     chunks_path = Path(args.input).resolve()
@@ -717,6 +789,7 @@ def main() -> int:
         "system_prompt": str(Path(args.system_prompt).resolve()),
         "max_tokens": args.max_tokens if args.max_tokens > 0 else None,
         "response_format": args.response_format,
+        "workers": args.workers,
         "output": str(out_jsonl),
         "resume": args.resume,
         "start_index": args.start_index,
@@ -726,78 +799,43 @@ def main() -> int:
     }
 
     mode = "a" if args.resume and out_jsonl.exists() else "w"
+    completed = 0
+
+    def write_record(wf, record: dict, entity_count: int, relation_count: int) -> None:
+        nonlocal completed
+        if record.get("status") == "ok":
+            summary["status_counts"]["ok"] += 1
+            summary["entity_count"] += entity_count
+            summary["relation_count"] += relation_count
+        else:
+            summary["status_counts"]["error"] += 1
+        completed += 1
+        wf.write(json.dumps(record, ensure_ascii=False) + "\n")
+        wf.flush()
+        if completed % max(1, args.summary_every) == 0 or completed == len(rows):
+            print(
+                f"[{completed}/{len(rows)}] ok={summary['status_counts']['ok']} "
+                f"err={summary['status_counts']['error']} "
+                f"entities={summary['entity_count']} relations={summary['relation_count']}"
+            )
+
     with out_jsonl.open(mode, encoding="utf-8") as wf:
-        for idx, chunk in enumerate(rows, start=1):
-            try:
-                if args.backend == "stub":
-                    raw = build_stub_record(chunk)
-                else:
-                    raw = call_openai_compatible(
-                        model,
-                        build_messages(system_prompt, chunk),
-                        base_url=base_url,
-                        api_key=api_key,
-                        site_url=args.site_url or None,
-                        app_name=args.app_name or None,
-                        timeout_seconds=args.request_timeout,
-                        max_retries=args.max_retries,
-                        retry_sleep_seconds=args.retry_sleep_seconds,
-                        max_tokens=args.max_tokens,
-                        response_format=args.response_format,
-                    )
-                    if args.sleep_seconds > 0:
-                        time.sleep(args.sleep_seconds)
-
-                entities, relations, warnings = validate_record(raw, schema)
-                evidence = {
-                    "evidence_id": f"{chunk['chunk_id']}_ev0",
-                    "doc_id": chunk.get("doc_id"),
-                    "chunk_id": chunk.get("chunk_id"),
-                    "title": chunk.get("title"),
-                    "year": chunk.get("year"),
-                    "source_type": chunk.get("source_type"),
-                    "evidence_level": chunk.get("evidence_level"),
-                }
-                record = {
-                    "chunk_id": chunk.get("chunk_id"),
-                    "doc_id": chunk.get("doc_id"),
-                    "status": "ok",
-                    "warnings": warnings,
-                    "entities": entities,
-                    "relations": relations,
-                    "evidence": evidence,
-                }
-                summary["status_counts"]["ok"] += 1
-                summary["entity_count"] += len(entities)
-                summary["relation_count"] += len(relations)
-            except Exception as exc:
-                record = {
-                    "chunk_id": chunk.get("chunk_id"),
-                    "doc_id": chunk.get("doc_id"),
-                    "status": "error",
-                    "error": str(exc),
-                    "entities": [],
-                    "relations": [],
-                    "evidence": {
-                        "evidence_id": f"{chunk['chunk_id']}_ev0",
-                        "doc_id": chunk.get("doc_id"),
-                        "chunk_id": chunk.get("chunk_id"),
-                        "title": chunk.get("title"),
-                        "year": chunk.get("year"),
-                        "source_type": chunk.get("source_type"),
-                        "evidence_level": chunk.get("evidence_level"),
-                    },
-                }
-                summary["status_counts"]["error"] += 1
-
-            wf.write(json.dumps(record, ensure_ascii=False) + "\n")
-            wf.flush()
-            if idx % max(1, args.summary_every) == 0 or idx == len(rows):
-                print(
-                    f"[{idx}/{len(rows)}] ok={summary['status_counts']['ok']} "
-                    f"err={summary['status_counts']['error']} "
-                    f"entities={summary['entity_count']} relations={summary['relation_count']}"
+        workers = max(1, args.workers)
+        if workers == 1 or len(rows) <= 1:
+            for chunk in rows:
+                record, entity_count, relation_count = process_chunk(
+                    chunk, args, schema, system_prompt, model, base_url, api_key
                 )
+                write_record(wf, record, entity_count, relation_count)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(process_chunk, chunk, args, schema, system_prompt, model, base_url, api_key)
+                    for chunk in rows
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    record, entity_count, relation_count = future.result()
+                    write_record(wf, record, entity_count, relation_count)
 
     (out_root / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0
