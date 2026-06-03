@@ -109,7 +109,7 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
 
 ### 7. Embedding + 向量库 100%
 
-- 模型：all-MiniLM-L6-v2（384 维，CPU 可跑）
+- 模型：BAAI/bge-small-zh-v1.5（512 维，CPU 可跑，中文优化）
 - 向量库：Qdrant，localhost:6333
 - Collection：asd_kgrag_chunks，7568 条向量已写入
 - 脚本：
@@ -117,7 +117,7 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
   - `scripts/embedding/search_chunks.py`
 - 设计文档：`scripts/embedding/README.md`
 
-已知限制：all-MiniLM-L6-v2 以英文为主，中文查询相似度偏低；后续可升级到 bge-small-zh-v1.5。
+已从 all-MiniLM-L6-v2 升级到 bge-small-zh-v1.5，中文查询 score 从 0.46 提升到 0.77，混合检索双重命中率显著改善。
 
 ### 8. 混合检索原型 100%
 
@@ -144,7 +144,7 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
    - 已排查确认：URL/key/model 配置正确，简单请求 7/7 成功
    - 轻量 prompt + max_tokens 限流有改善但不能完全抵消
    - 建议：接口窗口好时小批次推进，或换更快的模型/接口
-2. **中文 embedding 效果偏弱**：all-MiniLM-L6-v2 中文语义捕捉能力有限
+2. **中文 embedding 已升级到 bge-small-zh-v1.5，效果显著改善
    - 升级到 bge-small-zh-v1.5 可显著改善
 3. **抽取覆盖率低**：仅 8% 的 chunk 被抽取，图谱规模受限于抽取进度
    - 不影响管线搭建，但会影响最终问答质量

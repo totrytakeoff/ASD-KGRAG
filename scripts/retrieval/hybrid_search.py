@@ -14,7 +14,7 @@ NEO4J_DEFAULT_URL = 'bolt://localhost:7687'
 NEO4J_DEFAULT_USER = 'neo4j'
 NEO4J_DEFAULT_PASS = 'asd-kgrag-local'
 QDRANT_DEFAULT_URL = 'http://localhost:6333'
-DEFAULT_MODEL = 'all-MiniLM-L6-v2'
+DEFAULT_MODEL = 'BAAI/bge-small-zh-v1.5'
 DEFAULT_COLLECTION = 'asd_kgrag_chunks'
 
 

@@ -13,7 +13,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Search chunks in Qdrant")
     ap.add_argument("query", help="Search query text")
     ap.add_argument("--collection", default="asd_kgrag_chunks")
-    ap.add_argument("--model", default=os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
+    ap.add_argument("--model", default=os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"))
     ap.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL", "http://localhost:6333"))
     ap.add_argument("--qdrant-api-key", default=os.environ.get("QDRANT_API_KEY", ""))
     ap.add_argument("--top-k", type=int, default=5)

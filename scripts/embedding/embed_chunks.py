@@ -44,7 +44,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Embed chunks and write to Qdrant")
     ap.add_argument("--input", default="data/processed/chunks_extractable_full_ab_nonbook.jsonl")
     ap.add_argument("--collection", default="asd_kgrag_chunks")
-    ap.add_argument("--model", default=os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
+    ap.add_argument("--model", default=os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"))
     ap.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL", "http://localhost:6333"))
     ap.add_argument("--qdrant-api-key", default=os.environ.get("QDRANT_API_KEY", ""))
     ap.add_argument("--batch-size", type=int, default=64)

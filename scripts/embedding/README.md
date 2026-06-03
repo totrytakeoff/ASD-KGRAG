@@ -87,7 +87,7 @@
 
 ## 环境变量
 
-- `EMBEDDING_MODEL`：模型名称，默认 all-MiniLM-L6-v2
+- `EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5
 - `QDRANT_URL`：Qdrant 服务地址，默认 http://localhost:6333
 - `QDRANT_API_KEY`：可选，Qdrant API key
 
