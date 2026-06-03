@@ -461,6 +461,34 @@ Neo4j 实入库准备：
 
 此阶段之后再进入：
 
+### 当前进展
+
+- 已创建 scripts/embedding/ 模块
+- embedding 模型：all-MiniLM-L6-v2（384 维，CPU 可跑）
+- 向量库：Qdrant，Docker 部署在 localhost:6333
+- 7568 条 chunk 已全部嵌入并写入 Qdrant asd_kgrag_chunks collection
+- 向量搜索验证通过（英文查询效果好，中文受模型限制偏低）
+- 已创建 scripts/retrieval/hybrid_search.py 混合检索原型
+  - 图检索：关键词匹配 Entity → 1-hop 扩展 → 关联 Chunk
+  - 向量检索：query embedding → Qdrant top-K
+  - 合并：双重命中的 chunk 获得 +0.15 boost，证据等级加权
+  - 验证结果：英文查询 top-8 全部 [G+V] 双重命中，score 0.7-0.8
+
+### 7.5 混合检索（新增）
+
+- 图检索（Neo4j）：
+  - 用户查询 → 自动/手动关键词拆分 → Entity 模糊匹配 → 1-hop 子图扩展 → 关联 chunk_id 集合
+  - 支持多层路径：直接 SUPPORTED_BY → Evidence → Chunk，以及通过 neighbor entity 的间接路径
+- 向量检索（Qdrant）：
+  - 用户查询 → embedding → cosine 相似度 top-K → chunk 列表
+- 合并策略：
+  - 图检索 chunk_id 集合与向量 top-K 取交集/并集
+  - 同时出现在两路结果中的 chunk 获得 boost
+  - 证据等级加权：S > A > B > C > D
+  - 最终按 merged_score 排序
+
+
+
 - Graph + vector hybrid retrieval
 - LangChain/LangGraph 编排
 - KGRAG 问答原型
@@ -480,4 +508,4 @@ Neo4j 实入库准备：
 
 ## 当前结论
 
-前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通。当前进入 embedding 与向量库搭建阶段（Qdrant + all-MiniLM-L6-v2），同时继续推进 LLM 抽取（受接口延迟限制，待窗口恢复后用 MODE=throughput 小批次推进）。两条线并行：embedding 不依赖 LLM 调用，可先行完成；抽取在接口可用时继续。
+前处理、真实模型抽取、归一化、Neo4j 导出和本地 Neo4j 入库验证均已跑通。当前已完成 embedding 与向量库搭建（Qdrant + all-MiniLM-L6-v2，7568 条 chunk 已写入），并完成混合检索原型验证（Neo4j 子图 + Qdrant 向量，英文查询双重命中率 80%）。后续两条线并行：继续 LLM 抽取扩大图谱覆盖，同时开始 KGRAG 问答原型搭建。
