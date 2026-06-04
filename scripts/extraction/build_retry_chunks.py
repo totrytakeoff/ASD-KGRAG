@@ -20,14 +20,35 @@ def main() -> int:
     ap.add_argument("--extraction", required=True, help="chunk_extractions.jsonl from a run")
     ap.add_argument("--output", required=True, help="Retry chunk jsonl")
     ap.add_argument("--only-timeouts", action="store_true", default=False)
+    ap.add_argument("--transient-errors", action="store_true", default=False)
+    ap.add_argument("--error-substring", action="append", default=[])
     args = ap.parse_args()
+
+    transient_markers = (
+        "timed out",
+        "ssl:",
+        "unexpected_eof",
+        "remote end closed",
+        "temporary failure in name resolution",
+        "urlopen error",
+        "network error",
+    )
 
     error_ids: set[str] = set()
     for row in iter_jsonl(Path(args.extraction)):
         if row.get("status") != "error":
             continue
-        if args.only_timeouts and "timed out" not in (row.get("error", "").lower()):
-            continue
+        error_text = (row.get("error", "") or "").lower()
+        if args.only_timeouts or args.transient_errors or args.error_substring:
+            keep = True
+            if args.only_timeouts:
+                keep = "timed out" in error_text
+            if args.transient_errors:
+                keep = any(marker in error_text for marker in transient_markers)
+            if args.error_substring:
+                keep = any(marker.lower() in error_text for marker in args.error_substring)
+            if not keep:
+                continue
         chunk_id = row.get("chunk_id")
         if chunk_id:
             error_ids.add(chunk_id)

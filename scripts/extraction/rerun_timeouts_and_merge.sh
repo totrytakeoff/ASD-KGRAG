@@ -28,7 +28,7 @@ python scripts/extraction/build_retry_chunks.py \
   --input "$INPUT" \
   --extraction "$MAIN_JSONL" \
   --output "$RETRY_INPUT" \
-  --only-timeouts
+  --transient-errors
 
 if [[ ! -s "$RETRY_INPUT" ]]; then
   echo "no retry chunks"

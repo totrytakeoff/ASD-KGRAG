@@ -10,7 +10,7 @@
 | 2. 数据清洗 | 100% | 已完成 |
 | 3. 分块 | 100% | 已完成 |
 | 4. 元数据补全 | 100% | 已完成 |
-| 5. 实体关系抽取 | 8.5% | 进行中（858/7568 已尝试，642 成功；接口超时仍是主要卡点） |
+| 5. 实体关系抽取 | 9.0% | 进行中（968/7568 已尝试，682 成功；接口超时仍是主要卡点） |
 | 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成（基于已抽取部分） |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
@@ -20,7 +20,7 @@
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdran入库→混合检索验证）；当前主要卡点是 LLM 抽取接口慢导致覆盖率偏低（8%），以及 KGRAG 在线问答原型尚未搭建。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；当前主要卡点是 LLM 抽取接口慢导致覆盖率偏低（9.0%），以及 KGRAG 在线问答原型尚未搭建。`
 
 ---
 
@@ -48,12 +48,12 @@
 - 输出：`data/processed/source_catalog/`
 - 每篇文档含 title/year/source_type/evidence_level/include_flag/license
 
-### 5. 实体关系抽取 8%
+### 5. 实体关系抽取 9.0%
 
-- 已尝试：815 / 7568 = 10.8%
-- 成功：616 条
-- 失败：199 条（主要是接口超时）
-- 剩余未尝试：6753 条
+- 已尝试：968 / 7568 = 12.8%
+- 成功：682 条
+- 失败：286 条（主要是接口超时、SSL EOF、DNS 临时解析失败）
+- 剩余未尝试：6600 条
 
 已完成的工具链：
 
@@ -79,11 +79,19 @@
 
 模型调用配置入口：
 
-
+```bash
+export LLM_BASE_URL="https://api.siliconflow.cn/v1/chat/completions"
+export LLM_API_KEY="你的_key"
+export LLM_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+export LLM_MAX_TOKENS=1200
+export LLM_RESPONSE_FORMAT=json_object
+```
 
 继续推进命令：
 
-
+```bash
+MODE=throughput BATCH_SIZE=30 WORKERS=3 bash scripts/extraction/run_next_extraction_batch.sh
+```
 
 ### 6. 归一化 + Neo4j 导出/入库 100%
 
@@ -92,13 +100,13 @@
 - Cypher loader 生成：`scripts/graph/generate_neo4j_load_cypher.py`
 - 验证查询：`scripts/graph/write_validation_queries.py`
 
-当前图谱规模（基于 616 条成功抽取）：
+当前图谱规模（基于 682 条成功抽取）：
 
-- Entity：1716（Neo4j 验证显示 1717，存在 1 个口径差异待复核）
-- Evidence：642
+- Entity：1727
+- Evidence：682
 - Chunk：7568
-- MEASURED_BY：148
-- INDICATED_FOR：140
+- MEASURED_BY：146
+- INDICATED_FOR：142
 - COMORBID_WITH：31
 - SUITABLE_AGE：20
 - SUITABLE_SETTING：6
@@ -145,9 +153,9 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
 - 先跑 3 条探针：1 成功、2 错误，确认接口可用但慢
 - 再跑 10 条并发批次：6 成功、4 错误
 - 再跑 30 条并发批次：19 成功、11 错误
-- 当前合并/重校验后基线：858 行，642 成功，216 错误
+- 2026-06-04 继续推进后，当前合并/重校验后基线：968 行，682 成功，286 错误
 - 已刷新 normalized、Neo4j import、summary report
-- 已重载本地 Neo4j 并跑验证查询：Chunk 7568，Evidence 642，Entity 1717，实体关系 352
+- 最新导出：Chunk 7568，Evidence 682，Entity 1727，实体关系 355
 
 ## 当前问题与卡点
 
@@ -155,9 +163,8 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
    - 已排查确认：URL/key/model 配置正确，简单请求 7/7 成功
    - 轻量 prompt + max_tokens 限流有改善但不能完全抵消
    - 建议：接口窗口好时小批次推进，或换更快的模型/接口
-2. **中文 embedding 已升级到 bge-small-zh-v1.5，效果显著改善
-   - 升级到 bge-small-zh-v1.5 可显著改善
-3. **抽取覆盖率低**：仅 8% 的 chunk 被抽取，图谱规模受限于抽取进度
+2. **中文 embedding 已升级到 bge-small-zh-v1.5**：中文查询 score 从 0.46 提升到 0.77
+3. **抽取覆盖率低**：当前约 9.0% 的 chunk 有成功抽取结果，图谱规模受限于抽取进度
    - 不影响管线搭建，但会影响最终问答质量
 
 ---
@@ -217,4 +224,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdran入库→混合检索验证），当前全链路进度约 65%。两大缺口是：(1) LLM 抽取覆盖率只有 8%，受限于接口延迟；(2) KGRAG 在线问答原型尚未搭建。下一步优先升级中文 embedding 模型和搭建问答原型，同时继续推进抽取覆盖率。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 65%。两大缺口是：(1) LLM 抽取覆盖率约 9.0%，受限于接口延迟；(2) KGRAG 在线问答原型尚未搭建。下一步优先升级中文 embedding 模型和搭建问答原型，同时继续推进抽取覆盖率。
