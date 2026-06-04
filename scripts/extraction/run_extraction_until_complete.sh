@@ -23,6 +23,7 @@ REFRESH_EVERY_BATCHES="${REFRESH_EVERY_BATCHES:-10}"
 SLEEP_BETWEEN_BATCHES="${SLEEP_BETWEEN_BATCHES:-2}"
 MAX_NO_PROGRESS="${MAX_NO_PROGRESS:-3}"
 LOG_DIR="${LOG_DIR:-data/logs/extraction}"
+LOCK_DIR="${LOCK_DIR:-data/logs/extraction/run_until_complete.lock}"
 
 mkdir -p "$LOG_DIR"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
@@ -66,6 +67,19 @@ if [[ -z "${LLM_API_KEY:-}" ]]; then
   log "LLM_API_KEY is not set; aborting."
   exit 1
 fi
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  existing_pid="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+  if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+    log "another extraction daemon is already running: pid=${existing_pid}"
+    exit 3
+  fi
+  log "removing stale lock: ${LOCK_DIR}"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+fi
+printf '%s\n' "$$" >"${LOCK_DIR}/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
 
 log "run_id=${RUN_ID}"
 log "input=${INPUT}"

@@ -1,6 +1,6 @@
 # 项目状态记录
 
-更新时间：2026-06-03
+更新时间：2026-06-04
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 | 2. 数据清洗 | 100% | 已完成 |
 | 3. 分块 | 100% | 已完成 |
 | 4. 元数据补全 | 100% | 已完成 |
-| 5. 实体关系抽取 | 12.8% | 进行中（1298/7568 已尝试，968 成功；后台守护抽取脚本已准备） |
+| 5. 实体关系抽取 | 尝试 17.24% / 成功覆盖 12.88% | 进行中（1305/7568 已尝试，975 成功；后台守护抽取脚本已准备） |
 | 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成（基于已抽取部分） |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
@@ -20,7 +20,7 @@
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；当前主要卡点是 LLM 抽取接口慢导致覆盖率偏低（12.8% 已尝试，成功覆盖约 12.8%），以及 KGRAG 在线问答原型尚未搭建。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；当前主要卡点是 LLM 抽取接口慢导致成功覆盖率偏低（已尝试 17.24%，成功覆盖约 12.88%），以及 KGRAG 在线问答原型尚未搭建。`
 
 ---
 
@@ -48,12 +48,13 @@
 - 输出：`data/processed/source_catalog/`
 - 每篇文档含 title/year/source_type/evidence_level/include_flag/license
 
-### 5. 实体关系抽取 12.8%
+### 5. 实体关系抽取：尝试 17.24%，成功覆盖 12.88%
 
-- 已尝试：1298 / 7568 = 17.1%
-- 成功：968 条（合并/重校验基线）
+- 已尝试：1305 / 7568 = 17.24%
+- 成功：975 条（合并/重校验基线）
 - 失败：330 条（主要是接口超时、SSL EOF、DNS 临时解析失败）
-- 剩余未尝试：6268 条
+- 剩余未尝试：6263 条
+- 当前策略：后台守护脚本持续断点续抽，直到 7568 条全部尝试完成；完成后再统一刷新归一化、Neo4j import 和质量报告
 
 已完成的工具链：
 
@@ -68,6 +69,7 @@
   - `run_full_extraction_batches.sh`
   - `rerun_timeouts_and_merge.sh`
   - `refresh_current_outputs.sh`
+  - `run_extraction_until_complete.sh`（后台持续抽取，带运行锁，支持断点续抽）
 - 后处理脚本：
   - `merge_extraction_runs.py`
   - `revalidate_extraction_run.py`
@@ -100,16 +102,16 @@ nohup scripts/extraction/run_extraction_until_complete.sh >/tmp/asd_kgrag_extrac
 - Cypher loader 生成：`scripts/graph/generate_neo4j_load_cypher.py`
 - 验证查询：`scripts/graph/write_validation_queries.py`
 
-当前图谱规模（基于 968 条成功抽取）：
+当前图谱规模（基于 975 条成功抽取）：
 
 - Entity：1790
-- Evidence：968
+- Evidence：975
 - Chunk：7568
 - MEASURED_BY：146
 - INDICATED_FOR：161
-- COMORBID_WITH：31
+- COMORBID_WITH：33
 - SUITABLE_AGE：20
-- SUITABLE_SETTING：6
+- SUITABLE_SETTING：7
 - HAS_RISK：6
 - NOT_INDICATED_FOR：3
 
@@ -146,24 +148,25 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
 
 ---
 
-## 2026-06-03 抽取推进记录
+## 2026-06-03 至 2026-06-04 抽取推进记录
 
 - 新增 `.env` 自动读取，`.env` 已加入 `.gitignore`，避免 API key 入库
 - 新增 `--workers` 并发抽取能力，吞吐模式默认 `WORKERS=3`
 - 先跑 3 条探针：1 成功、2 错误，确认接口可用但慢
 - 再跑 10 条并发批次：6 成功、4 错误
 - 再跑 30 条并发批次：19 成功、11 错误
-- 2026-06-04 继续推进后，当前合并/重校验后基线：1298 行，968 成功，330 错误
+- 2026-06-04 继续推进后，当前合并/重校验后基线：1305 行，975 成功，330 错误
 - 已刷新 normalized、Neo4j import、summary report
-- 最新导出：Chunk 7568，Evidence 968，Entity 1790，实体关系 376
+- 最新导出：Chunk 7568，Evidence 975，Entity 1790，实体关系 376
 
 ## 后台持续抽取方案
 
-已新增 `scripts/extraction/run_extraction_until_complete.sh`。该脚本会：
+已新增 `scripts/extraction/run_extraction_until_complete.sh`。这是当前抽取推进主入口，目标是一次性挂后台跑完整个剩余抽取任务。该脚本会：
 
 - 自动读取 `.env`
 - 循环调用 `run_next_extraction_batch.sh`
-- 依赖 `resume + start_index` 断点续抽
+- 依赖 `resume + start_index` 断点续抽，已经写入 `chunk_extractions.jsonl` 的 chunk 不会重复抽取
+- 使用运行锁 `data/logs/extraction/run_until_complete.lock`，避免误启动多个守护进程并发写同一个输出文件
 - 默认参数：`MODE=throughput BATCH_SIZE=30 WORKERS=3 REQUEST_TIMEOUT=90 MAX_RETRIES=0`
 - 每 `REFRESH_EVERY_BATCHES=10` 批自动刷新 current outputs
 - 日志写入 `data/logs/extraction/run_until_complete_*.log`
@@ -187,9 +190,9 @@ tail -f data/logs/extraction/run_until_complete_*.log
 1. **LLM 抽取吞吐低**：SiliconFlow 接口在真实抽取任务上延迟高（35-90s），成功率和吞吐量低
    - 已排查确认：URL/key/model 配置正确，简单请求 7/7 成功
    - 轻量 prompt + max_tokens 限流有改善但不能完全抵消
-   - 建议：接口窗口好时小批次推进，或换更快的模型/接口
+   - 当前处理：不再人工轮询批次，改为后台守护脚本持续推进；默认 `WORKERS=3`，暂不提升到 5，避免 DNS/连接错误显著增加
 2. **中文 embedding 已升级到 bge-small-zh-v1.5**：中文查询 score 从 0.46 提升到 0.77
-3. **抽取覆盖率低**：当前约 12.8% 的 chunk 有成功抽取结果，图谱规模受限于抽取进度
+3. **抽取覆盖率低**：当前约 12.88% 的 chunk 有成功抽取结果，图谱规模受限于抽取进度
    - 不影响管线搭建，但会影响最终问答质量
 
 ---
@@ -202,8 +205,9 @@ tail -f data/logs/extraction/run_until_complete_*.log
 |---|------|--------|----------|
 | R1 | 合并 docker-compose 为单文件，清理旧文件 | 已完成 | - |
 | R2 | 升级 embedding 模型到 bge-small-zh-v1.5，重跑 7568 条嵌入 | 高 | 30min |
-| R3 | 接口可用时继续 LLM 抽取（MODE=throughput 小批次） | 中 | 持续 |
-| R4 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
+| R3 | 启动后台守护抽取，直到 7568 条全部尝试完成 | 高 | 持续后台运行 |
+| R4 | 抽取完成后统一 refresh normalized / Neo4j import / summary report | 高 | 10min |
+| R5 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
 
 ### 中期（3-5 天内）
 
@@ -212,7 +216,7 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | M1 | 搭建 KGRAG 问答原型：FastAPI + hybrid_search + LLM 生成 | 高 | 4h |
 | M2 | 问答 prompt 设计：结构化回答模板 + 安全护栏 + 引用格式 | 高 | 2h |
 | M3 | Entity card embedding：生成实体卡片文本 + 嵌入 + Qdrant entity collection | 中 | 2h |
-| M4 | 抽取进度推进到 30%+（约 2270 条成功） | 中 | 取决于接口 |
+| M4 | 抽取全部尝试完成后，集中重试 timeout / DNS / SSL 等临时失败项 | 高 | 取决于接口 |
 
 ### 远期（1-2 周）
 
@@ -249,4 +253,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 65%。两大缺口是：(1) LLM 抽取成功覆盖约 12.8%，受限于接口延迟；(2) KGRAG 在线问答原型尚未搭建。下一步优先升级中文 embedding 模型和搭建问答原型，同时继续推进抽取覆盖率。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 65%。两大缺口是：(1) LLM 抽取已尝试 17.24%，成功覆盖约 12.88%，受限于接口延迟和网络错误；(2) KGRAG 在线问答原型尚未搭建。下一步先让后台守护脚本持续跑完整体抽取，再集中处理临时失败项和刷新图谱。
