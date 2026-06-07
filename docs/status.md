@@ -1,6 +1,6 @@
 # 项目状态记录
 
-更新时间：2026-06-04
+更新时间：2026-06-07
 
 ## 总体进度
 
@@ -10,8 +10,8 @@
 | 2. 数据清洗 | 100% | 已完成 |
 | 3. 分块 | 100% | 已完成 |
 | 4. 元数据补全 | 100% | 已完成 |
-| 5. 实体关系抽取 | 尝试 17.24% / 成功覆盖 12.88% | 进行中（1305/7568 已尝试，975 成功；后台守护抽取脚本已准备） |
-| 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成（基于已抽取部分） |
+| 5. 实体关系抽取 | 尝试 100% / 成功覆盖 98.48% | 第一轮全量 + 第一轮失败重试已完成（7453/7568 成功，剩余 115 条失败；准备第二轮重试） |
+| 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成（基于 7453 条成功抽取；第二轮重试后需再刷新验证） |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
 | 9. KGRAG 问答原型 | 0% | 未开始 |
@@ -20,7 +20,7 @@
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；当前主要卡点是 LLM 抽取接口慢导致成功覆盖率偏低（已尝试 17.24%，成功覆盖约 12.88%），以及 KGRAG 在线问答原型尚未搭建。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量尝试和第一轮失败重试，成功覆盖率提升到 98.48%。当前主要剩余工作是对 115 条失败样本做第二轮重试、刷新图谱入库结果，并搭建 KGRAG 在线问答原型。`
 
 ---
 
@@ -48,13 +48,13 @@
 - 输出：`data/processed/source_catalog/`
 - 每篇文档含 title/year/source_type/evidence_level/include_flag/license
 
-### 5. 实体关系抽取：尝试 17.24%，成功覆盖 12.88%
+### 5. 实体关系抽取：尝试 100%，成功覆盖 98.48%
 
-- 已尝试：1305 / 7568 = 17.24%
-- 成功：975 条（合并/重校验基线）
-- 失败：330 条（主要是接口超时、SSL EOF、DNS 临时解析失败）
-- 剩余未尝试：6263 条
-- 当前策略：后台守护脚本持续断点续抽，直到 7568 条全部尝试完成；完成后再统一刷新归一化、Neo4j import 和质量报告
+- 第一轮全量抽取：7568 / 7568 已尝试，3040 成功，4528 失败
+- 第一轮 transient 失败重试：4521 条已尝试，4408 成功，113 失败
+- 当前合并/重校验基线：7453 成功，115 失败，成功覆盖率 98.48%
+- 剩余失败类型：SSL EOF 107 条，空/异常 API 响应 5 条，模型 JSON 解析错误 2 条，timeout 1 条
+- 当前策略：保留 7453 条成功结果，只对剩余 115 条失败样本做第二轮重试；完成后统一刷新 normalized、Neo4j import 和质量报告
 
 已完成的工具链：
 
@@ -70,6 +70,7 @@
   - `rerun_timeouts_and_merge.sh`
   - `refresh_current_outputs.sh`
   - `run_extraction_until_complete.sh`（后台持续抽取，带运行锁，支持断点续抽）
+  - `run_retry_until_complete.sh`（后台持续重试 transient 失败项，带运行锁，完成后自动刷新 current outputs）
 - 后处理脚本：
   - `merge_extraction_runs.py`
   - `revalidate_extraction_run.py`
@@ -102,18 +103,18 @@ nohup scripts/extraction/run_extraction_until_complete.sh >/tmp/asd_kgrag_extrac
 - Cypher loader 生成：`scripts/graph/generate_neo4j_load_cypher.py`
 - 验证查询：`scripts/graph/write_validation_queries.py`
 
-当前图谱规模（基于 975 条成功抽取）：
+当前 normalized 规模（基于 7453 条成功抽取）：
 
-- Entity：1790
-- Evidence：975
+- Entity：3694
+- Evidence：7453
 - Chunk：7568
-- MEASURED_BY：146
-- INDICATED_FOR：161
-- COMORBID_WITH：33
-- SUITABLE_AGE：20
-- SUITABLE_SETTING：7
-- HAS_RISK：6
-- NOT_INDICATED_FOR：3
+- INDICATED_FOR：533
+- MEASURED_BY：257
+- COMORBID_WITH：83
+- SUITABLE_AGE：43
+- HAS_RISK：32
+- SUITABLE_SETTING：27
+- NOT_INDICATED_FOR：8
 
 Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
 
@@ -158,6 +159,17 @@ Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
 - 2026-06-04 继续推进后，当前合并/重校验后基线：1305 行，975 成功，330 错误
 - 已刷新 normalized、Neo4j import、summary report
 - 最新导出：Chunk 7568，Evidence 975，Entity 1790，实体关系 376
+
+## 2026-06-05 至 2026-06-07 抽取推进记录
+
+- 第一轮全量抽取已完成：7568 / 7568 全部尝试
+- 第一轮全量结果：3040 成功，4528 失败，主要失败来自 SSL EOF、证书校验失败、timeout、DNS 临时解析失败
+- 新增 `scripts/extraction/run_retry_until_complete.sh`，支持失败项后台断点重试
+- 第一轮 transient retry 输入：4521 条
+- 第一轮 transient retry 结果：4408 成功，113 失败
+- 当前合并/重校验结果：7453 成功，115 失败，成功覆盖率 98.48%
+- 当前剩余失败：SSL EOF 107 条，空/异常 API 响应 5 条，模型 JSON 解析错误 2 条，timeout 1 条
+- 下一步：生成 115 条 remaining retry 输入，单独写入第二轮 retry 输出目录，避免覆盖第一轮 retry 结果
 
 ## 后台持续抽取方案
 
@@ -205,9 +217,11 @@ tail -f data/logs/extraction/run_until_complete_*.log
 |---|------|--------|----------|
 | R1 | 合并 docker-compose 为单文件，清理旧文件 | 已完成 | - |
 | R2 | 升级 embedding 模型到 bge-small-zh-v1.5，重跑 7568 条嵌入 | 高 | 30min |
-| R3 | 启动后台守护抽取，直到 7568 条全部尝试完成 | 高 | 持续后台运行 |
-| R4 | 抽取完成后统一 refresh normalized / Neo4j import / summary report | 高 | 10min |
-| R5 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
+| R3 | 启动后台守护抽取，直到 7568 条全部尝试完成 | 已完成 | - |
+| R4 | 第一轮失败项 transient retry | 已完成 | - |
+| R5 | 第二轮重试剩余 115 条失败样本 | 高 | 后台运行 |
+| R6 | 第二轮重试完成后统一 refresh normalized / Neo4j import / summary report，并做入库验证 | 高 | 10min |
+| R7 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
 
 ### 中期（3-5 天内）
 
@@ -216,7 +230,7 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | M1 | 搭建 KGRAG 问答原型：FastAPI + hybrid_search + LLM 生成 | 高 | 4h |
 | M2 | 问答 prompt 设计：结构化回答模板 + 安全护栏 + 引用格式 | 高 | 2h |
 | M3 | Entity card embedding：生成实体卡片文本 + 嵌入 + Qdrant entity collection | 中 | 2h |
-| M4 | 抽取全部尝试完成后，集中重试 timeout / DNS / SSL 等临时失败项 | 高 | 取决于接口 |
+| M4 | 抽取剩余失败降到可接受水平后，冻结 extraction v5 current 作为图谱构建基线 | 高 | 30min |
 
 ### 远期（1-2 周）
 
@@ -253,4 +267,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 65%。两大缺口是：(1) LLM 抽取已尝试 17.24%，成功覆盖约 12.88%，受限于接口延迟和网络错误；(2) KGRAG 在线问答原型尚未搭建。下一步先让后台守护脚本持续跑完整体抽取，再集中处理临时失败项和刷新图谱。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 80%。实体关系抽取已完成全量尝试和第一轮失败重试，成功覆盖率 98.48%。下一步先对剩余 115 条失败样本做第二轮重试，再刷新图谱入库结果并进入 KGRAG 问答原型。

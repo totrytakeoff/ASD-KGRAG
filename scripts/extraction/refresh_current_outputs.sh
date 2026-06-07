@@ -18,6 +18,13 @@ fi
 if [[ -s "$RETRY_INCREMENTAL_JSONL" ]]; then
   inputs+=("$RETRY_INCREMENTAL_JSONL")
 fi
+if [[ -n "${EXTRA_EXTRACTION_JSONL:-}" ]]; then
+  for extra_jsonl in $EXTRA_EXTRACTION_JSONL; do
+    if [[ -s "$extra_jsonl" ]]; then
+      inputs+=("$extra_jsonl")
+    fi
+  done
+fi
 
 python scripts/extraction/merge_extraction_runs.py \
   --inputs "${inputs[@]}" \

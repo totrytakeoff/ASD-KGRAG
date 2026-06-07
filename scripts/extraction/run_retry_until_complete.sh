@@ -15,6 +15,7 @@ RETRY_INPUT="${4:-data/processed/chunks_extractable_full_ab_nonbook_retry_transi
 
 MAIN_JSONL="${MAIN_OUTPUT_DIR}/chunk_extractions.jsonl"
 RETRY_JSONL="${RETRY_OUTPUT_DIR}/chunk_extractions.jsonl"
+SOURCE_EXTRACTION_JSONL="${SOURCE_EXTRACTION_JSONL:-$MAIN_JSONL}"
 
 BATCH_SIZE="${BATCH_SIZE:-30}"
 WORKERS="${WORKERS:-2}"
@@ -27,6 +28,7 @@ MAX_TOKENS="${MAX_TOKENS:-1200}"
 SYSTEM_PROMPT="${SYSTEM_PROMPT:-scripts/extraction/entity_relation_system_prompt_v6_light.txt}"
 RESPONSE_FORMAT="${RESPONSE_FORMAT:-json_object}"
 REQUEST_SLEEP="${REQUEST_SLEEP:-0.05}"
+RETRY_FILTER="${RETRY_FILTER:-transient}"
 REFRESH_EVERY_BATCHES="${REFRESH_EVERY_BATCHES:-10}"
 SLEEP_BETWEEN_BATCHES="${SLEEP_BETWEEN_BATCHES:-2}"
 MAX_NO_PROGRESS="${MAX_NO_PROGRESS:-3}"
@@ -126,20 +128,31 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 log "run_id=${RUN_ID}"
 log "input=${INPUT}"
 log "main_output=${MAIN_OUTPUT_DIR}"
+log "source_extraction=${SOURCE_EXTRACTION_JSONL}"
 log "retry_output=${RETRY_OUTPUT_DIR}"
 log "retry_input=${RETRY_INPUT}"
 log "batch_size=${BATCH_SIZE} workers=${WORKERS} request_timeout=${REQUEST_TIMEOUT} timeout=${TIMEOUT_SECONDS} max_retries=${MAX_RETRIES}"
+log "retry_filter=${RETRY_FILTER}"
 log "log_file=${LOG_FILE}"
+
+filter_args=()
+if [[ "$RETRY_FILTER" == "transient" ]]; then
+  filter_args=(--transient-errors)
+elif [[ "$RETRY_FILTER" != "all" ]]; then
+  log "unknown RETRY_FILTER=${RETRY_FILTER}; expected transient or all"
+  exit 4
+fi
 
 python3 scripts/extraction/build_retry_chunks.py \
   --input "$INPUT" \
-  --extraction "$MAIN_JSONL" \
+  --extraction "$SOURCE_EXTRACTION_JSONL" \
   --output "$RETRY_INPUT" \
-  --transient-errors >>"$LOG_FILE" 2>&1
+  "${filter_args[@]}" >>"$LOG_FILE" 2>&1
 
 if [[ ! -s "$RETRY_INPUT" ]]; then
   log "no transient retry chunks; refreshing current outputs."
-  bash scripts/extraction/refresh_current_outputs.sh >>"$LOG_FILE" 2>&1
+  EXTRA_EXTRACTION_JSONL="${RETRY_JSONL}${EXTRA_EXTRACTION_JSONL:+ ${EXTRA_EXTRACTION_JSONL}}" \
+    bash scripts/extraction/refresh_current_outputs.sh >>"$LOG_FILE" 2>&1
   log "complete."
   exit 0
 fi
@@ -158,7 +171,8 @@ while true; do
   log "retry progress attempted=${attempted}/${total} ok=${ok} error=${err}"
   if [[ "$attempted" -ge "$total" ]]; then
     log "all retry chunks attempted; refreshing final current outputs."
-    bash scripts/extraction/refresh_current_outputs.sh >>"$LOG_FILE" 2>&1
+    EXTRA_EXTRACTION_JSONL="${RETRY_JSONL}${EXTRA_EXTRACTION_JSONL:+ ${EXTRA_EXTRACTION_JSONL}}" \
+      bash scripts/extraction/refresh_current_outputs.sh >>"$LOG_FILE" 2>&1
     log "complete."
     exit 0
   fi
@@ -205,7 +219,8 @@ while true; do
 
   if (( batch_no % REFRESH_EVERY_BATCHES == 0 )); then
     log "refreshing current outputs after ${batch_no} retry batches"
-    bash scripts/extraction/refresh_current_outputs.sh >>"$LOG_FILE" 2>&1
+    EXTRA_EXTRACTION_JSONL="${RETRY_JSONL}${EXTRA_EXTRACTION_JSONL:+ ${EXTRA_EXTRACTION_JSONL}}" \
+      bash scripts/extraction/refresh_current_outputs.sh >>"$LOG_FILE" 2>&1
     log "refresh done"
   fi
 
