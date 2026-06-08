@@ -15,13 +15,13 @@
 | 6.1 图谱质量标注 + 保守实体合并 | 100% | 已完成 v2 小批量 curated 归并并重新入库 |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
-| 9. KGRAG 问答原型 | 75% | CLI + HTTP API 原型已完成 dry-run 和真实 LLM 生成验证 |
+| 9. KGRAG 问答原型 | 90% | CLI + HTTP API + 批量评估基线已完成，dry-run 10/10、小样本真实生成 4/4 通过 |
 
-全链路打通进度：**约 97%**（离线建库、图谱质量 v2 处理、混合检索和 KGRAG CLI/API 问答生成闭环已完成）
+全链路打通进度：**约 98%**（离线建库、图谱质量 v2 处理、混合检索、KGRAG CLI/API 问答生成和基础评估闭环已完成）
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前图谱已完成质量标注、保守实体合并、v2 小批量 curated 归并和 Neo4j 重新入库，KGRAG CLI/API 问答原型已完成 dry-run 和真实 LLM 生成验证。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前图谱已完成质量标注、保守实体合并、v2 小批量 curated 归并和 Neo4j 重新入库，KGRAG CLI/API 问答原型已完成基础评估闭环。`
 
 ---
 
@@ -275,7 +275,7 @@ v2 smoke test：
   - 中文查询受 embedding 模型限制，双重命中率偏低
   - 纯向量查询 score 0.4-0.6，混合后提升至 0.7-0.8
 
-### 9. KGRAG 问答原型 75%
+### 9. KGRAG 问答原型 90%
 
 - CLI 入口：`scripts/qa/kgrag_answer.py`
 - HTTP API 入口：`scripts/qa/kgrag_api.py`
@@ -285,11 +285,14 @@ v2 smoke test：
   - Neo4j 图实体/关系召回
   - Qdrant 向量召回
   - 图关系证据 chunk 优先注入问答上下文
+  - 基于 curated alias map 的查询侧别名扩展，例如 `ABA` 可召回“应用行为分析”
   - 具体实体词优先，例如 ADOS 优先于 ASD/孤独症这类泛词
   - 证据片段围绕关键词截取，避免 chunk 前半段噪声遮挡关键证据
   - prompt 内置文献引用 `[C1]`、图谱关系引用 `[G1]` 和诊断/干预/用药/风险护栏
   - 支持 `--dry-run` 验证检索、上下文和 prompt，不调用 LLM
   - 标准库 HTTP API：`GET /health`、`POST /ask`
+  - 批量评估脚本：`scripts/qa/evaluate_qa.py`
+  - 评估题集：`scripts/qa/eval_questions.jsonl`
 
 已验证 dry-run：
 
@@ -347,6 +350,45 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
 - `/ask` dry-run 返回 query、contexts、relations 和 prompt preview
 - `/ask` 真实生成返回 answer、contexts、relations 的结构化 JSON
 
+已完成批量评估基线：
+
+```bash
+.venv/bin/python scripts/qa/evaluate_qa.py --dry-run --context-k 6 --graph-evidence-k 4
+```
+
+dry-run 结果：
+
+- 题数：10
+- 通过：10/10
+- 平均上下文数：6.0
+- 平均图关系数：10.9
+- 上下文引用覆盖率：100%
+- 图关系召回覆盖率：100%
+- 期望实体词命中率：100%（9/9，安全泛问题不计入）
+
+```bash
+.venv/bin/python scripts/qa/evaluate_qa.py \
+  --ids assessment_ados intervention_aba comorbidity_sleep safety_direct_treatment \
+  --context-k 4 \
+  --graph-evidence-k 2
+```
+
+真实生成小样本结果：
+
+- 题数：4
+- 通过：4/4
+- 回答引用覆盖率：100%
+- 文献引用覆盖率：100%
+- 图关系引用覆盖率：100%
+- 临床护栏覆盖率：100%
+- 输出目录：`data/qa_eval/20260608_164615_real`
+
+本轮修正：
+
+- 暴露问题：`ABA` 查询只能通过向量召回，图关系未命中。
+- 原因：Neo4j 当前实体名是“应用行为分析”，查询侧未扩展英文缩写。
+- 修正：QA 检索前读取 `config/graph/curated_entity_alias_map.json` 做受控别名扩展，并将“应用行为分析”补入 ABA curated alias group。
+
 ---
 
 ## 2026-06-03 至 2026-06-04 抽取推进记录
@@ -403,13 +445,10 @@ tail -f data/logs/extraction/run_until_complete_*.log
 
 ## 当前问题与卡点
 
-1. **LLM 抽取吞吐低**：SiliconFlow 接口在真实抽取任务上延迟高（35-90s），成功率和吞吐量低
-   - 已排查确认：URL/key/model 配置正确，简单请求 7/7 成功
-   - 轻量 prompt + max_tokens 限流有改善但不能完全抵消
-   - 当前处理：不再人工轮询批次，改为后台守护脚本持续推进；默认 `WORKERS=3`，暂不提升到 5，避免 DNS/连接错误显著增加
-2. **中文 embedding 已升级到 bge-small-zh-v1.5**：中文查询 score 从 0.46 提升到 0.77
-3. **抽取覆盖率低**：当前约 12.88% 的 chunk 有成功抽取结果，图谱规模受限于抽取进度
-   - 不影响管线搭建，但会影响最终问答质量
+1. **QA 评估规模仍小**：当前只有 10 个 dry-run 种子问题和 4 个真实生成样本，足够做 smoke/e2e baseline，但还不能代表稳定产品质量。
+2. **批量评估性能偏慢**：当前每题会重新初始化 embedding 模型，dry-run 10 题约 2 分钟；后续应把模型、Qdrant client、Neo4j driver 提升为批处理级缓存。
+3. **API 服务壳仍是原型**：当前使用标准库 HTTP server，适合本地验证；如果要长期运行或接前端，应迁移到 FastAPI/uvicorn 或容器化服务入口。
+4. **图谱仍有 curated 质量空间**：v2 alias 已处理 ATEC/CARS/ABA，但 ADOS/ADI-R/M-CHAT-R/F 等版本边界复杂实体仍需人工抽样后再决定是否归并。
 
 ---
 
@@ -420,7 +459,7 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | # | 任务 | 优先级 | 预估工时 |
 |---|------|--------|----------|
 | R1 | 合并 docker-compose 为单文件，清理旧文件 | 已完成 | - |
-| R2 | 升级 embedding 模型到 bge-small-zh-v1.5，重跑 7568 条嵌入 | 高 | 30min |
+| R2 | 升级 embedding 模型到 bge-small-zh-v1.5，重跑 7568 条嵌入 | 已完成 | - |
 | R3 | 启动后台守护抽取，直到 7568 条全部尝试完成 | 已完成 | - |
 | R4 | 第一轮失败项 transient retry | 已完成 | - |
 | R5 | 第二轮重试剩余 115 条失败样本 | 已完成 | - |
@@ -428,7 +467,7 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | R6b | 执行 Neo4j 入库验证 | 已完成 | - |
 | R7 | 图谱质量首轮处理：质量标注 + 保守实体合并 + Neo4j 重新入库 | 已完成 | - |
 | R8 | 高价值 curated alias 归并 v2：ATEC/CARS/ABA + Neo4j 重新入库 | 已完成 | - |
-| R9 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
+| R9 | 建立 QA 评估题集和批量评估脚本 | 已完成 | - |
 
 ### 中期（3-5 天内）
 
@@ -436,8 +475,9 @@ tail -f data/logs/extraction/run_until_complete_*.log
 |---|------|--------|----------|
 | M1 | KGRAG CLI 问答原型：检索上下文 + prompt + LLM 生成 | 已完成 | - |
 | M2 | KGRAG API 服务化：HTTP API `/ask` + `/health` | 已完成 | - |
-| M2a | 可选替换为 FastAPI/uvicorn 服务壳 | 中 | 1h |
-| M2b | 问答 prompt 迭代：结构化回答模板 + 安全护栏 + 引用格式 | 进行中 | 1h |
+| M2a | 优化 QA 批评估性能：缓存 embedding model / Qdrant client / Neo4j driver | 高 | 1h |
+| M2b | 可选替换为 FastAPI/uvicorn 服务壳或容器化 API 服务 | 中 | 1h |
+| M2c | 扩展 QA 评估题集到 30-50 题，覆盖评估工具、干预、共病、风险、安全拒答 | 高 | 2h |
 | M3 | Entity card embedding：生成实体卡片文本 + 嵌入 + Qdrant entity collection | 中 | 2h |
 | M4 | 继续小批量 curated alias 归并，必须基于人工抽样确认 | 中 | 持续 |
 | M5 | 冻结 extraction v5 current 作为图谱构建基线 | 已完成 | - |
@@ -449,7 +489,7 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | L1 | Query 路由：自动分流到知识问答 / 干预建议两种模式 | 中 | 3h |
 | L2 | 评测框架：纯 LLM vs 纯 RAG vs KGRAG 对比 + 可追溯性指标 | 高 | 4h |
 | L3 | 社区摘要 embedding（需要图社区检测算法） | 低 | 3h |
-| L4 | 抽取覆盖 50%+ 并重刷整条管线 | 中 | 持续 |
+| L4 | 扩展人工评测与对比实验，形成可复现 QA 质量报告 | 中 | 持续 |
 | L5 | 前端界面 / Web Demo | 低 | 视需求 |
 
 ---
@@ -477,4 +517,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 97%。实体关系抽取成功覆盖率 100%，Neo4j 已完成质量标注、保守实体合并、v2 curated alias 归并和重新入库。KGRAG CLI/API 问答原型已完成 dry-run 和真实 LLM 生成验证，下一步进入问答质量评测与服务体验打磨。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 98%。实体关系抽取成功覆盖率 100%，Neo4j 已完成质量标注、保守实体合并、v2 curated alias 归并和重新入库。KGRAG CLI/API 问答原型已完成基础评估闭环，下一步应优先优化 QA 批评估性能并扩展评估题集，再推进 API 服务化和前端体验。

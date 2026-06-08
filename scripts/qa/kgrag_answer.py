@@ -52,6 +52,41 @@ DEFAULT_QA_OPTIONS = {
 }
 
 
+def normalize_alias_key(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def load_query_aliases(path: Path | None = None) -> dict[str, list[str]]:
+    path = path or ROOT / "config" / "graph" / "curated_entity_alias_map.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    alias_map: dict[str, list[str]] = {}
+    for group in payload.get("groups", []):
+        terms = [group.get("group_id", ""), *(group.get("aliases") or [])]
+        terms = [term for term in terms if term]
+        expanded = sorted(set(terms))
+        for term in expanded:
+            alias_map[normalize_alias_key(term)] = expanded
+    return alias_map
+
+
+def expand_keywords(keywords: list[str]) -> list[str]:
+    alias_map = load_query_aliases()
+    expanded = []
+    for keyword in keywords:
+        expanded.append(keyword)
+        expanded.extend(alias_map.get(normalize_alias_key(keyword), []))
+    seen = set()
+    deduped = []
+    for keyword in expanded:
+        key = normalize_alias_key(keyword)
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(keyword)
+    return deduped
+
+
 def load_dotenv(path: Path) -> None:
     if not path.exists():
         return
@@ -228,7 +263,7 @@ def relation_relevance(row: dict, keywords: list[str]) -> tuple[float, int, floa
 
 
 def retrieve_context(args) -> dict:
-    keywords = args.keywords if args.keywords else auto_keywords(args.query)
+    keywords = expand_keywords(args.keywords if args.keywords else auto_keywords(args.query))
     driver = GraphDatabase.driver(args.neo4j_url, auth=(args.neo4j_user, args.neo4j_pass))
     try:
         graph_result = graph_search(driver, keywords)
