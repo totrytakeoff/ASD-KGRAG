@@ -47,7 +47,24 @@ SET n.name = row.name,
       ELSE split(row.`synonyms:string[]`, '|')
     END,
     n.source_chunk_count = toInteger(row.`source_chunk_count:int`),
-    n.source_doc_count = toInteger(row.`source_doc_count:int`);
+    n.source_doc_count = toInteger(row.`source_doc_count:int`),
+    n.quality_flags = CASE
+      WHEN row.`quality_flags:string[]` IS NULL OR row.`quality_flags:string[]` = '' THEN []
+      ELSE split(row.`quality_flags:string[]`, '|')
+    END,
+    n.is_isolated = row.`is_isolated:boolean` = 'true',
+    n.graph_degree = CASE WHEN row.`graph_degree:int` = '' THEN 0 ELSE toInteger(row.`graph_degree:int`) END,
+    n.duplicate_group_key = row.duplicate_group_key,
+    n.duplicate_group_size = CASE WHEN row.`duplicate_group_size:int` = '' THEN 1 ELSE toInteger(row.`duplicate_group_size:int`) END,
+    n.merge_candidate_types = CASE
+      WHEN row.`merge_candidate_types:string[]` IS NULL OR row.`merge_candidate_types:string[]` = '' THEN []
+      ELSE split(row.`merge_candidate_types:string[]`, '|')
+    END,
+    n.conflict_aliases = CASE
+      WHEN row.`conflict_aliases:string[]` IS NULL OR row.`conflict_aliases:string[]` = '' THEN []
+      ELSE split(row.`conflict_aliases:string[]`, '|')
+    END,
+    n.tool_category = row.tool_category;
 
 LOAD CSV WITH HEADERS FROM 'file:///{import_subdir}/neo4j_nodes_chunk.csv' AS row
 MERGE (n:Chunk {{chunk_id: row.`chunk_id:ID(Chunk)`}})
@@ -79,7 +96,15 @@ CALL apoc.merge.relationship(
   {{
     confidence: toFloat(row.`confidence:float`),
     support_count: toInteger(row.`support_count:int`),
-    evidence_text_example: row.evidence_text_example
+    evidence_text_example: row.evidence_text_example,
+    quality_flags: CASE
+      WHEN row.`quality_flags:string[]` IS NULL OR row.`quality_flags:string[]` = '' THEN []
+      ELSE split(row.`quality_flags:string[]`, '|')
+    END,
+    qa_usage: row.qa_usage,
+    evidence_level_summary: row.evidence_level_summary,
+    src_type: row.src_type,
+    dst_type: row.dst_type
   }},
   dst
 ) YIELD rel

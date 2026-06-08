@@ -49,6 +49,14 @@ def main() -> int:
             "synonyms:string[]": "|".join(row.get("synonyms", [])),
             "source_chunk_count:int": row.get("source_chunk_count", 0),
             "source_doc_count:int": row.get("source_doc_count", 0),
+            "quality_flags:string[]": "|".join(row.get("quality_flags", [])),
+            "is_isolated:boolean": str(bool(row.get("is_isolated", False))).lower(),
+            "graph_degree:int": row.get("graph_degree", 0),
+            "duplicate_group_key": row.get("duplicate_group_key", ""),
+            "duplicate_group_size:int": row.get("duplicate_group_size", 1),
+            "merge_candidate_types:string[]": "|".join(row.get("merge_candidate_types", [])),
+            "conflict_aliases:string[]": "|".join(row.get("conflict_aliases", [])),
+            "tool_category": row.get("tool_category", ""),
             ":LABEL": "Entity",
         }
         for row in entities
@@ -90,6 +98,11 @@ def main() -> int:
             "confidence:float": row["confidence"],
             "support_count:int": row["support_count"],
             "evidence_text_example": row.get("evidence_text_example", ""),
+            "quality_flags:string[]": "|".join(row.get("quality_flags", [])),
+            "qa_usage": row.get("qa_usage", ""),
+            "evidence_level_summary": row.get("evidence_level_summary", ""),
+            "src_type": row.get("src_type", ""),
+            "dst_type": row.get("dst_type", ""),
         }
         for row in relations
     ]
@@ -113,10 +126,10 @@ def main() -> int:
         if row.get("chunk_id") and row.get("evidence_id")
     ]
 
-    write_csv(out_root / "neo4j_nodes_entity.csv", list(entity_nodes[0].keys()) if entity_nodes else ["entity_id:ID(Entity)", "name", "canonical_name", "type", "description", "synonyms:string[]", "source_chunk_count:int", "source_doc_count:int", ":LABEL"], entity_nodes)
+    write_csv(out_root / "neo4j_nodes_entity.csv", list(entity_nodes[0].keys()) if entity_nodes else ["entity_id:ID(Entity)", "name", "canonical_name", "type", "description", "synonyms:string[]", "source_chunk_count:int", "source_doc_count:int", "quality_flags:string[]", "is_isolated:boolean", "graph_degree:int", "duplicate_group_key", "duplicate_group_size:int", "merge_candidate_types:string[]", "conflict_aliases:string[]", "tool_category", ":LABEL"], entity_nodes)
     write_csv(out_root / "neo4j_nodes_chunk.csv", list(chunk_nodes[0].keys()) if chunk_nodes else ["chunk_id:ID(Chunk)", "doc_id", "title", "year:int", "source_type", "evidence_level", "page_start:int", "page_end:int", "text", ":LABEL"], chunk_nodes)
     write_csv(out_root / "neo4j_nodes_evidence.csv", list(evidence_nodes[0].keys()) if evidence_nodes else ["evidence_id:ID(Evidence)", "doc_id", "chunk_id", "title", "year:int", "source_type", "evidence_level", ":LABEL"], evidence_nodes)
-    write_csv(out_root / "neo4j_relationships_entity.csv", list(entity_relationships[0].keys()) if entity_relationships else [":START_ID(Entity)", ":END_ID(Entity)", ":TYPE", "relation_id", "confidence:float", "support_count:int", "evidence_text_example"], entity_relationships)
+    write_csv(out_root / "neo4j_relationships_entity.csv", list(entity_relationships[0].keys()) if entity_relationships else [":START_ID(Entity)", ":END_ID(Entity)", ":TYPE", "relation_id", "confidence:float", "support_count:int", "evidence_text_example", "quality_flags:string[]", "qa_usage", "evidence_level_summary", "src_type", "dst_type"], entity_relationships)
     write_csv(out_root / "neo4j_relationships_supports.csv", list(supports_relationships[0].keys()) if supports_relationships else [":START_ID(Entity)", ":END_ID(Evidence)", ":TYPE", "relation_id"], supports_relationships)
     write_csv(out_root / "neo4j_relationships_from.csv", list(from_relationships[0].keys()) if from_relationships else [":START_ID(Chunk)", ":END_ID(Evidence)", ":TYPE"], from_relationships)
 
