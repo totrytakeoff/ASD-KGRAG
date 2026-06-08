@@ -10,8 +10,26 @@
 
 ## 入口
 
+CLI：
+
 ```bash
 .venv/bin/python scripts/qa/kgrag_answer.py "ADOS 是什么? 它在 ASD 评估中有什么作用?"
+```
+
+HTTP API：
+
+```bash
+.venv/bin/python scripts/qa/kgrag_api.py --host 127.0.0.1 --port 8010
+```
+
+接口：
+
+```bash
+curl -sS http://127.0.0.1:8010/health
+
+curl -sS -X POST http://127.0.0.1:8010/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"ADOS 是什么? 它在 ASD 评估中有什么作用?","dry_run":true}'
 ```
 
 ## 配置
@@ -41,6 +59,14 @@ QDRANT_URL="http://localhost:6333"
   --graph-evidence-k 4
 ```
 
+API dry-run：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8010/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"ADOS 是什么? 它在 ASD 评估中有什么作用?","dry_run":true,"context_k":4,"graph_evidence_k":2}'
+```
+
 ## 当前流程
 
 1. 自动从问题抽取关键词，过滤“是什么/有什么作用”等泛问题词。
@@ -53,7 +79,7 @@ QDRANT_URL="http://localhost:6333"
 
 ## 当前限制
 
-- 这是 CLI 原型，不是 Web/API 服务。
+- API 当前使用 Python 标准库 HTTP server，暂未引入 FastAPI/uvicorn。
 - 关系置信度来自抽取和归一化结果，不等价于医学证据强度。
 - ADOS / ADI-R / M-CHAT-R/F 等评估工具仍保留版本边界，暂不强行合并。
 - 对干预、诊断、用药、风险类问题，回答必须保留“不能替代专业评估或临床决策”的限制。

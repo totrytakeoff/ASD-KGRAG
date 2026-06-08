@@ -15,13 +15,13 @@
 | 6.1 图谱质量标注 + 保守实体合并 | 100% | 已完成 v2 小批量 curated 归并并重新入库 |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
-| 9. KGRAG 问答原型 | 55% | CLI 原型已完成 dry-run 和真实 LLM 生成验证，待 API 服务化 |
+| 9. KGRAG 问答原型 | 75% | CLI + HTTP API 原型已完成 dry-run 和真实 LLM 生成验证 |
 
-全链路打通进度：**约 96%**（离线建库、图谱质量 v2 处理、混合检索和 KGRAG CLI 问答生成闭环已完成，在线服务化待搭建）
+全链路打通进度：**约 97%**（离线建库、图谱质量 v2 处理、混合检索和 KGRAG CLI/API 问答生成闭环已完成）
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前图谱已完成质量标注、保守实体合并、v2 小批量 curated 归并和 Neo4j 重新入库，KGRAG CLI 问答原型已完成 dry-run 和真实 LLM 生成验证。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前图谱已完成质量标注、保守实体合并、v2 小批量 curated 归并和 Neo4j 重新入库，KGRAG CLI/API 问答原型已完成 dry-run 和真实 LLM 生成验证。`
 
 ---
 
@@ -275,9 +275,10 @@ v2 smoke test：
   - 中文查询受 embedding 模型限制，双重命中率偏低
   - 纯向量查询 score 0.4-0.6，混合后提升至 0.7-0.8
 
-### 9. KGRAG 问答原型 55%
+### 9. KGRAG 问答原型 75%
 
 - CLI 入口：`scripts/qa/kgrag_answer.py`
+- HTTP API 入口：`scripts/qa/kgrag_api.py`
 - 使用文档：`scripts/qa/README.md`
 - 当前能力：
   - 自动读取 `.env` 中的 LLM 配置
@@ -288,6 +289,7 @@ v2 smoke test：
   - 证据片段围绕关键词截取，避免 chunk 前半段噪声遮挡关键证据
   - prompt 内置文献引用 `[C1]`、图谱关系引用 `[G1]` 和诊断/干预/用药/风险护栏
   - 支持 `--dry-run` 验证检索、上下文和 prompt，不调用 LLM
+  - 标准库 HTTP API：`GET /health`、`POST /ask`
 
 已验证 dry-run：
 
@@ -324,6 +326,26 @@ v2 smoke test：
 - 文献证据引用格式：`[C1]`、`[C2]`
 - 图谱关系引用格式：`[G2]`、`[G3]`
 - 回答包含证据边界和“不能替代专业评估或临床决策”的护栏
+
+已验证 HTTP API：
+
+```bash
+.venv/bin/python scripts/qa/kgrag_api.py --host 127.0.0.1 --port 8010
+```
+
+```bash
+curl -sS http://127.0.0.1:8010/health
+
+curl -sS -X POST http://127.0.0.1:8010/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"ADOS 是什么? 它在 ASD 评估中有什么作用?","dry_run":true,"context_k":4,"graph_evidence_k":2}'
+```
+
+验证结果：
+
+- `/health` 返回 `{"status":"ok","service":"kgrag-qa"}`
+- `/ask` dry-run 返回 query、contexts、relations 和 prompt preview
+- `/ask` 真实生成返回 answer、contexts、relations 的结构化 JSON
 
 ---
 
@@ -413,7 +435,8 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | # | 任务 | 优先级 | 预估工时 |
 |---|------|--------|----------|
 | M1 | KGRAG CLI 问答原型：检索上下文 + prompt + LLM 生成 | 已完成 | - |
-| M2 | KGRAG API 服务化：FastAPI + `/ask` + `/health` | 高 | 2h |
+| M2 | KGRAG API 服务化：HTTP API `/ask` + `/health` | 已完成 | - |
+| M2a | 可选替换为 FastAPI/uvicorn 服务壳 | 中 | 1h |
 | M2b | 问答 prompt 迭代：结构化回答模板 + 安全护栏 + 引用格式 | 进行中 | 1h |
 | M3 | Entity card embedding：生成实体卡片文本 + 嵌入 + Qdrant entity collection | 中 | 2h |
 | M4 | 继续小批量 curated alias 归并，必须基于人工抽样确认 | 中 | 持续 |
@@ -454,4 +477,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 96%。实体关系抽取成功覆盖率 100%，Neo4j 已完成质量标注、保守实体合并、v2 curated alias 归并和重新入库。KGRAG CLI 问答原型已完成 dry-run 和真实 LLM 生成验证，下一步进入 API 服务化。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 97%。实体关系抽取成功覆盖率 100%，Neo4j 已完成质量标注、保守实体合并、v2 curated alias 归并和重新入库。KGRAG CLI/API 问答原型已完成 dry-run 和真实 LLM 生成验证，下一步进入问答质量评测与服务体验打磨。

@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 from neo4j import GraphDatabase
 from qdrant_client import QdrantClient
@@ -38,6 +39,17 @@ from hybrid_search import (  # noqa: E402
 
 DEFAULT_LLM_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
+
+
+DEFAULT_QA_OPTIONS = {
+    "retrieval_k": 20,
+    "context_k": 6,
+    "relation_k": 30,
+    "relation_evidence_k": 6,
+    "graph_evidence_k": 4,
+    "graph_evidence_pool_k": 30,
+    "max_chars_per_chunk": 900,
+}
 
 
 def load_dotenv(path: Path) -> None:
@@ -482,7 +494,97 @@ def format_dry_run(context: dict, messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def default_namespace(**overrides) -> SimpleNamespace:
+    load_dotenv(ROOT / ".env")
+    values = {
+        "query": "",
+        "keywords": [],
+        "neo4j_url": os.environ.get("NEO4J_URL", NEO4J_DEFAULT_URL),
+        "neo4j_user": os.environ.get("NEO4J_USER", NEO4J_DEFAULT_USER),
+        "neo4j_pass": os.environ.get("NEO4J_PASS", NEO4J_DEFAULT_PASS),
+        "qdrant_url": os.environ.get("QDRANT_URL", QDRANT_DEFAULT_URL),
+        "collection": os.environ.get("QDRANT_COLLECTION", DEFAULT_COLLECTION),
+        "model": os.environ.get("EMBEDDING_MODEL", DEFAULT_MODEL),
+        "dry_run": False,
+        "llm_base_url": os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or DEFAULT_LLM_BASE_URL,
+        "llm_api_key": os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or "",
+        "llm_model": os.environ.get("LLM_MODEL") or DEFAULT_LLM_MODEL,
+        "llm_timeout": float(os.environ.get("LLM_TIMEOUT_SECONDS", "90")),
+        "llm_max_retries": int(os.environ.get("LLM_MAX_RETRIES", "1")),
+        "llm_max_tokens": int(os.environ.get("QA_LLM_MAX_TOKENS", "1200")),
+        **DEFAULT_QA_OPTIONS,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def summarize_context(context: dict) -> dict:
+    return {
+        "query": context["query"],
+        "keywords": context["keywords"],
+        "graph_counts": {
+            "entities": len(context["graph"]["entities"]),
+            "relations": len(context["graph"]["relations"]),
+            "chunks": len(context["graph"]["chunk_ids"]),
+        },
+        "contexts": [
+            {
+                "citation_id": item.get("citation_id"),
+                "retrieval": item.get("retrieval"),
+                "score": item.get("score"),
+                "chunk_id": item.get("chunk_id"),
+                "title": item.get("title"),
+                "year": item.get("year"),
+                "evidence_level": item.get("evidence_level"),
+                "source_type": item.get("source_type"),
+                "page_start": item.get("page_start"),
+                "page_end": item.get("page_end"),
+            }
+            for item in context["contexts"]
+        ],
+        "relations": [
+            {
+                "graph_id": f"G{idx}",
+                "source": row.get("source"),
+                "source_type": row.get("source_type"),
+                "relation": row.get("relation"),
+                "target": row.get("target"),
+                "target_type": row.get("target_type"),
+                "support_count": row.get("support_count"),
+                "confidence": row.get("confidence"),
+                "qa_usage": row.get("qa_usage"),
+            }
+            for idx, row in enumerate(context["relations"][:20], 1)
+        ],
+    }
+
+
+def answer_query(args) -> dict:
+    context = retrieve_context(args)
+    messages = build_prompt(context, args.max_chars_per_chunk)
+    result = {
+        "query": context["query"],
+        "dry_run": bool(args.dry_run),
+        "context": summarize_context(context),
+    }
+    if args.dry_run:
+        result["prompt_preview"] = messages[-1]["content"]
+        return result
+    if not args.llm_api_key:
+        raise RuntimeError("LLM API key is not set. Use dry_run or set LLM_API_KEY / OPENAI_API_KEY.")
+    result["answer"] = call_openai_compatible(
+        model=args.llm_model,
+        messages=messages,
+        base_url=args.llm_base_url,
+        api_key=args.llm_api_key,
+        timeout_seconds=args.llm_timeout,
+        max_retries=args.llm_max_retries,
+        max_tokens=args.llm_max_tokens,
+    )
+    return result
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     load_dotenv(ROOT / ".env")
 
     ap = argparse.ArgumentParser(description="KGRAG QA prototype")
@@ -508,28 +610,28 @@ def main() -> int:
     ap.add_argument("--llm-timeout", type=float, default=float(os.environ.get("LLM_TIMEOUT_SECONDS", "90")))
     ap.add_argument("--llm-max-retries", type=int, default=int(os.environ.get("LLM_MAX_RETRIES", "1")))
     ap.add_argument("--llm-max-tokens", type=int, default=int(os.environ.get("QA_LLM_MAX_TOKENS", "1200")))
-    args = ap.parse_args()
+    return ap
 
-    context = retrieve_context(args)
-    messages = build_prompt(context, args.max_chars_per_chunk)
 
-    if args.dry_run:
-        print(format_dry_run(context, messages))
+def main() -> int:
+    args = build_arg_parser().parse_args()
+    result = answer_query(args)
+    if result["dry_run"]:
+        print(format_dry_run(
+            {
+                "query": result["query"],
+                "keywords": result["context"]["keywords"],
+                "graph": {
+                    "entities": [None] * result["context"]["graph_counts"]["entities"],
+                    "relations": [None] * result["context"]["graph_counts"]["relations"],
+                    "chunk_ids": [None] * result["context"]["graph_counts"]["chunks"],
+                },
+                "contexts": result["context"]["contexts"],
+            },
+            [{"content": ""}, {"content": result["prompt_preview"]}],
+        ))
         return 0
-    if not args.llm_api_key:
-        print("LLM API key is not set. Use --dry-run or set LLM_API_KEY / OPENAI_API_KEY.", file=sys.stderr)
-        return 2
-
-    answer = call_openai_compatible(
-        model=args.llm_model,
-        messages=messages,
-        base_url=args.llm_base_url,
-        api_key=args.llm_api_key,
-        timeout_seconds=args.llm_timeout,
-        max_retries=args.llm_max_retries,
-        max_tokens=args.llm_max_tokens,
-    )
-    print(answer)
+    print(result["answer"])
     return 0
 
 
