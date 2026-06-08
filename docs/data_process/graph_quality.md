@@ -4,22 +4,27 @@
 
 ## 目标
 
-本轮质量处理分两步：
+本轮质量处理分三步：
 
 1. 在 normalized 和 Neo4j 层增加可审计的质量标注，便于后续筛选、人工复核、KGRAG 回答护栏和下一轮实体归并。
 2. 对同类型同名实体执行保守合并，只处理低风险类型，避免把年龄阶段、场景、机制、任务等语义边界敏感实体误合并。
+3. 对少量高价值实体执行 curated alias map 归并，只合并同类型实体。
 
 ## 新增产物
 
 - `scripts/graph/annotate_graph_quality.py`
 - `scripts/graph/apply_entity_merge_rules.py`
+- `config/graph/curated_entity_alias_map.json`
 - `data/processed/normalized_full_ab_nonbook_v5_current_quality/`
 - `data/processed/neo4j_import_full_ab_nonbook_v5_current_quality/`
 - `data/processed/normalized_full_ab_nonbook_v5_current_curated_base/`
 - `data/processed/normalized_full_ab_nonbook_v5_current_curated_quality/`
 - `data/processed/neo4j_import_full_ab_nonbook_v5_current_curated_quality/`
+- `data/processed/normalized_full_ab_nonbook_v5_current_curated_v2_base/`
+- `data/processed/normalized_full_ab_nonbook_v5_current_curated_v2_quality/`
+- `data/processed/neo4j_import_full_ab_nonbook_v5_current_curated_v2_quality/`
 
-当前 Neo4j 挂载目录 `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/` 已同步为保守合并后的质量增强版导出。
+当前 Neo4j 挂载目录 `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/` 已同步为 v2 curated 质量增强版导出。
 
 ## 标注字段
 
@@ -46,15 +51,15 @@ Relation 新增：
 
 Entity：
 
-- 总数：3688
-- 孤立实体：2800
+- 总数：3684
+- 孤立实体：2798
 - 同名重复实体组：121
 - 别名跨类型冲突实体：414
-- 单 chunk 实体：2514
+- 单 chunk 实体：2512
 
 AssessmentTool 分类：
 
-- `clinical_assessment`：189
+- `clinical_assessment`：186
 - `unspecified_assessment`：224
 - `generic_method`：38
 - `research_modality`：18
@@ -62,16 +67,16 @@ AssessmentTool 分类：
 
 Relation：
 
-- 总数：980
+- 总数：978
 - `guardrailed_clinical_context`：574
-- `use_with_caution`：329
+- `use_with_caution`：326
 - `research_context_only`：43
-- `standard`：34
+- `standard`：35
 
 主要 relation flags：
 
-- `single_evidence_relation`：799
-- `low_confidence`：666
+- `single_evidence_relation`：797
+- `low_confidence`：665
 - `clinical_answer_requires_evidence_guardrail`：574
 - `measurement_tool_category:generic_method`：19
 - `measurement_tool_category:research_modality`：17
@@ -106,6 +111,36 @@ Relation：
 - 当前脚本已收紧为 `DEFAULT_MERGE_TYPES` 白名单，只合并低风险类型。
 - `annotate_graph_quality.py` 会保留人工/上游质量标记，并只刷新脚本派生的质量标记，避免重跑标注时丢失 `merged_same_type_same_name`。
 
+## Curated Alias Map v2
+
+v2 目标：
+
+- 只处理高价值、人工抽样后边界明确的实体。
+- 只合并同类型实体，跨类型冲突继续保留为质量标记。
+- 暂不扩大 ADOS / ADI-R / M-CHAT-R/F 等版本边界复杂工具的自动归并。
+
+v2 配置：
+
+- `config/graph/curated_entity_alias_map.json`
+
+v2 结果：
+
+- 输入 Entity：3706
+- 输出 Entity：3684
+- 减少 Entity：22
+- Merge group：21
+- `same_type_same_name`：18 组
+- `curated_alias_map`：3 组
+- 输入 Relation：987
+- 输出 Relation：978
+- 减少 Relation：9
+
+v2 新增 curated 合并组：
+
+- `AssessmentTool`：ATEC / 自闭症治疗评估量表（ATEC）
+- `AssessmentTool`：CARS / CARS-2 / Childhood Autism Rating Scale: Second edition
+- `Intervention`：应用行为分析 / ABA训练法
+
 ## 当前 Neo4j 状态
 
 Neo4j Browser：
@@ -117,7 +152,7 @@ Neo4j Browser：
 节点：
 
 - `Chunk`：7568
-- `Entity`：3688
+- `Entity`：3684
 - `Evidence`：7568
 
 关系：
@@ -126,7 +161,7 @@ Neo4j Browser：
 - `FROM_CHUNK`：7568
 - `SUPPORTED_BY`：1702
 - `INDICATED_FOR`：534
-- `MEASURED_BY`：253
+- `MEASURED_BY`：251
 - `COMORBID_WITH`：83
 - `SUITABLE_AGE`：43
 - `HAS_RISK`：32
@@ -192,6 +227,15 @@ ORDER BY e.source_chunk_count DESC
 LIMIT 50;
 ```
 
+查看 v2 curated alias map 合并的实体：
+
+```cypher
+MATCH (e:Entity)
+WHERE 'merged_by:curated_alias_map' IN e.quality_flags
+RETURN e.type, e.name, e.source_chunk_count, e.synonyms[..10]
+ORDER BY e.source_chunk_count DESC;
+```
+
 查看剩余同名重复组：
 
 ```cypher
@@ -204,7 +248,7 @@ LIMIT 50;
 
 ## 后续建议
 
-1. 对剩余 `same_name_duplicate` 和 `alias_type_conflict` 做高价值抽样，不再扩大无差别自动合并范围。
-2. 优先补充 ASD 核心概念、评估工具、干预手段的 curated alias map。
+1. 进入 KGRAG 问答原型，把 `qa_usage` 和 `tool_category` 纳入回答生成策略。
+2. 继续 curated alias map 时必须先人工抽样，避免合并跨类型语义实体。
 3. 将 `tool_category` 用于 KGRAG 回答策略：临床筛查工具可以直接用于“评估工具”回答，研究模态和算法工具只能作为研究背景。
 4. 将 `qa_usage` 用于问答护栏：干预类回答必须带证据说明，不直接生成医疗建议。

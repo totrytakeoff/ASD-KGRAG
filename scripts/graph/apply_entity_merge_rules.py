@@ -34,6 +34,16 @@ def pick_primary(entities: list[dict]) -> dict:
     )[0]
 
 
+def normalize_alias(text: str) -> str:
+    return " ".join((text or "").strip().lower().split())
+
+
+def entity_aliases(entity: dict) -> set[str]:
+    values = {entity.get("name", ""), entity.get("canonical_name", "")}
+    values.update(entity.get("synonyms", []) or [])
+    return {normalize_alias(value) for value in values if normalize_alias(value)}
+
+
 def merge_entities(group: list[dict], primary: dict) -> dict:
     merged = dict(primary)
     synonyms = set(primary.get("synonyms", []) or [])
@@ -65,6 +75,24 @@ def merge_entities(group: list[dict], primary: dict) -> dict:
     merged["source_chunk_count"] = len(source_chunk_ids)
     merged["source_doc_count"] = len(source_doc_ids)
     return merged
+
+
+def load_alias_groups(path: Path | None) -> dict[tuple[str, str], str]:
+    if not path:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    alias_to_group: dict[tuple[str, str], str] = {}
+    for group in data.get("groups", []):
+        entity_type = group["type"]
+        group_id = group["group_id"]
+        aliases = {group_id}
+        aliases.update(group.get("aliases", []) or [])
+        for alias in aliases:
+            key = (entity_type, normalize_alias(alias))
+            if key in alias_to_group and alias_to_group[key] != group_id:
+                raise ValueError(f"Alias maps to multiple groups: {entity_type} {alias}")
+            alias_to_group[key] = group_id
+    return alias_to_group
 
 
 def merge_relations(relations: list[dict], entity_id_map: dict[str, str]) -> list[dict]:
@@ -131,16 +159,39 @@ DEFAULT_MERGE_TYPES = {
 }
 
 
-def apply_same_type_same_name_merge(input_dir: Path, output_dir: Path, merge_types: set[str]) -> dict:
+def group_key_for_entity(entity: dict, merge_types: set[str], alias_to_group: dict[tuple[str, str], str]) -> tuple[str, str]:
+    entity_type = entity.get("type", "")
+    if entity_type in merge_types:
+        for alias in sorted(entity_aliases(entity)):
+            curated_group = alias_to_group.get((entity_type, alias))
+            if curated_group:
+                return entity_type, f"curated:{curated_group}"
+    return (
+        entity_type,
+        entity.get("duplicate_group_key") or entity.get("canonical_name") or entity.get("name") or "",
+    )
+
+
+def merge_reason(key: tuple[str, str]) -> str:
+    return "curated_alias_map" if key[1].startswith("curated:") else "same_type_same_name"
+
+
+def apply_same_type_same_name_merge(
+    input_dir: Path,
+    output_dir: Path,
+    merge_types: set[str],
+    alias_to_group: dict[tuple[str, str], str] | None = None,
+) -> dict:
     entities = list(iter_jsonl(input_dir / "entities.jsonl"))
     relations = list(iter_jsonl(input_dir / "relations.jsonl"))
     evidence = list(iter_jsonl(input_dir / "evidence.jsonl"))
+    alias_to_group = alias_to_group or {}
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     by_group: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for entity in entities:
-        key = (entity.get("type", ""), entity.get("duplicate_group_key") or entity.get("canonical_name") or entity.get("name") or "")
+        key = group_key_for_entity(entity, merge_types, alias_to_group)
         by_group[key].append(entity)
 
     entity_id_map: dict[str, str] = {}
@@ -155,11 +206,17 @@ def apply_same_type_same_name_merge(input_dir: Path, output_dir: Path, merge_typ
         primary = pick_primary(group)
         for entity in group:
             entity_id_map[entity["entity_id"]] = primary["entity_id"]
-        merged_entities.append(merge_entities(group, primary))
+        merged = merge_entities(group, primary)
+        reason = merge_reason(key)
+        flags = set(merged.get("quality_flags", []) or [])
+        flags.add(f"merged_by:{reason}")
+        merged["quality_flags"] = sorted(flags)
+        merged_entities.append(merged)
         merge_groups.append(
             {
                 "type": key[0],
                 "duplicate_group_key": key[1],
+                "reason": reason,
                 "primary_entity_id": primary["entity_id"],
                 "merged_entity_ids": [entity["entity_id"] for entity in group if entity["entity_id"] != primary["entity_id"]],
                 "entity_count": len(group),
@@ -183,6 +240,7 @@ def apply_same_type_same_name_merge(input_dir: Path, output_dir: Path, merge_typ
         "input_relations": len(relations),
         "output_relations": len(merged_relations),
         "relation_delta": len(relations) - len(merged_relations),
+        "merge_reasons": dict(Counter(group["reason"] for group in merge_groups)),
     }
     (output_dir / "merge_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     (output_dir / "merge_groups.json").write_text(json.dumps(merge_groups, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -200,8 +258,19 @@ def main() -> int:
         default=sorted(DEFAULT_MERGE_TYPES),
         help="Entity types eligible for same-type same-name merging.",
     )
+    ap.add_argument(
+        "--alias-map",
+        default="",
+        help="Optional curated alias map JSON. Only same-type entities are merged.",
+    )
     args = ap.parse_args()
-    apply_same_type_same_name_merge(Path(args.input_dir).resolve(), Path(args.output_dir).resolve(), set(args.merge_types))
+    alias_to_group = load_alias_groups(Path(args.alias_map).resolve()) if args.alias_map else {}
+    apply_same_type_same_name_merge(
+        Path(args.input_dir).resolve(),
+        Path(args.output_dir).resolve(),
+        set(args.merge_types),
+        alias_to_group,
+    )
     return 0
 
 

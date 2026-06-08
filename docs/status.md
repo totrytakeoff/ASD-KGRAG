@@ -12,16 +12,16 @@
 | 4. 元数据补全 | 100% | 已完成 |
 | 5. 实体关系抽取 | 100% | 全量抽取 + 两轮失败重试已完成（7568/7568 成功，0 失败） |
 | 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成并验证通过（基于 7568 条成功抽取） |
-| 6.1 图谱质量标注 + 保守实体合并 | 100% | 已完成首轮质量处理并重新入库 |
+| 6.1 图谱质量标注 + 保守实体合并 | 100% | 已完成 v2 小批量 curated 归并并重新入库 |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
 | 9. KGRAG 问答原型 | 0% | 未开始 |
 
-全链路打通进度：**约 92%**（离线建库、图谱质量首轮处理和混合检索已完成，在线问答待搭建）
+全链路打通进度：**约 93%**（离线建库、图谱质量 v2 处理和混合检索已完成，在线问答待搭建）
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前图谱已完成首轮质量标注、保守实体合并和 Neo4j 重新入库，主要剩余工作是搭建 KGRAG 在线问答原型。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前图谱已完成质量标注、保守实体合并、v2 小批量 curated 归并和 Neo4j 重新入库，主要剩余工作是搭建 KGRAG 在线问答原型。`
 
 ---
 
@@ -169,7 +169,7 @@ Neo4j 实际入库计数：
 - 允许合并：`AssessmentTool`、`Intervention`、`Condition`、`Symptom`、`Comorbidity`、`Risk`
 - 暂不合并：`AgeStage`、`Setting`、`Mechanism`、`Task`
 
-保守合并结果：
+首轮保守合并结果：
 
 - Entity：3706 → 3688，减少 18 个
 - Relation：987 → 980，减少 7 条重复/自环关系
@@ -201,7 +201,54 @@ Neo4j 实际入库计数：
 
 当前判断：
 
-首轮质量处理已经完成“可审计标注 + 低风险归并”，图谱可以作为 KGRAG 原型基线。剩余的同名重复和别名冲突数量仍高，但不应继续用全自动粗规则处理；下一步应围绕高价值 ASD 核心概念、评估工具、干预手段做小批量规则化归并和人工抽样验证。
+首轮质量处理已经完成“可审计标注 + 低风险归并”，图谱可以作为 KGRAG 原型基线。剩余的同名重复和别名冲突数量仍高，不应继续用全自动粗规则处理。
+
+### 6.3 高价值 curated alias 归并 v2 100%
+
+处理时间：2026-06-08
+
+新增配置：
+
+- `config/graph/curated_entity_alias_map.json`
+
+策略：
+
+- 只使用显式 alias map
+- 只合并同类型实体
+- 不合并跨类型冲突实体
+- 暂不扩大 ADOS / ADI-R / M-CHAT-R/F 等版本边界复杂的工具归并
+
+v2 归并结果：
+
+- Entity：3706 → 3684，累计减少 22 个
+- Relation：987 → 978，累计减少 9 条重复/自环关系
+- Merge group：21 组
+- 其中同类型同名合并：18 组
+- curated alias map 合并：3 组
+
+新增 curated 合并组：
+
+- `AssessmentTool`：ATEC / 自闭症治疗评估量表（ATEC）
+- `AssessmentTool`：CARS / CARS-2 / Childhood Autism Rating Scale: Second edition
+- `Intervention`：应用行为分析 / ABA训练法
+
+v2 当前 Neo4j 图谱概览：
+
+- Entity：3684
+- Evidence：7568
+- Chunk：7568
+- Entity relations：978
+- SUPPORTS：1702
+- FROM：7568
+- `MEASURED_BY`：251
+- `INDICATED_FOR`：534
+
+v2 smoke test：
+
+- 查询：`ADOS autism diagnostic observation schedule`
+- 图检索：20 entities，41 relations，310 chunks
+- 向量检索：5 hits
+- top-5 仍有 `G+V` 双重命中，Neo4j + Qdrant 混合检索链路正常
 
 ### 7. Embedding + 向量库 100%
 
@@ -312,16 +359,17 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | R6 | 第二轮重试完成后统一 refresh normalized / Neo4j import / summary report | 已完成 | - |
 | R6b | 执行 Neo4j 入库验证 | 已完成 | - |
 | R7 | 图谱质量首轮处理：质量标注 + 保守实体合并 + Neo4j 重新入库 | 已完成 | - |
-| R8 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
+| R8 | 高价值 curated alias 归并 v2：ATEC/CARS/ABA + Neo4j 重新入库 | 已完成 | - |
+| R9 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
 
 ### 中期（3-5 天内）
 
 | # | 任务 | 优先级 | 预估工时 |
 |---|------|--------|----------|
-| M1 | 高价值实体归并规则第二轮：ASD 核心概念、评估工具、干预手段 | 高 | 2h |
-| M2 | 搭建 KGRAG 问答原型：FastAPI + hybrid_search + LLM 生成 | 高 | 4h |
-| M3 | 问答 prompt 设计：结构化回答模板 + 安全护栏 + 引用格式 | 高 | 2h |
-| M4 | Entity card embedding：生成实体卡片文本 + 嵌入 + Qdrant entity collection | 中 | 2h |
+| M1 | 搭建 KGRAG 问答原型：FastAPI + hybrid_search + LLM 生成 | 高 | 4h |
+| M2 | 问答 prompt 设计：结构化回答模板 + 安全护栏 + 引用格式 | 高 | 2h |
+| M3 | Entity card embedding：生成实体卡片文本 + 嵌入 + Qdrant entity collection | 中 | 2h |
+| M4 | 继续小批量 curated alias 归并，必须基于人工抽样确认 | 中 | 持续 |
 | M5 | 冻结 extraction v5 current 作为图谱构建基线 | 已完成 | - |
 
 ### 远期（1-2 周）
@@ -359,4 +407,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 92%。实体关系抽取成功覆盖率 100%，Neo4j 已完成首轮质量标注、保守实体合并和重新入库。下一步优先做第二轮高价值实体归并规则，然后进入 KGRAG 问答原型。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 93%。实体关系抽取成功覆盖率 100%，Neo4j 已完成质量标注、保守实体合并、v2 curated alias 归并和重新入库。下一步进入 KGRAG 问答原型。

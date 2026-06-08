@@ -1,0 +1,37 @@
+{
+  "description": "Curated same-type entity alias groups for high-value ASD graph cleanup. Groups are intentionally small and conservative.",
+  "groups": [
+    {
+      "type": "AssessmentTool",
+      "group_id": "atec",
+      "aliases": [
+        "自闭症治疗评估量表atec",
+        "自闭症治疗评估量表（atec）",
+        "autism treatment evaluation checklist"
+      ]
+    },
+    {
+      "type": "AssessmentTool",
+      "group_id": "cars",
+      "aliases": [
+        "cars2",
+        "cars-2",
+        "childhood autism rating scale second edition",
+        "childhood autism rating scale: second edition",
+        "儿童孤独症评定量表",
+        "儿童孤独症评定量表 cars"
+      ]
+    },
+    {
+      "type": "Intervention",
+      "group_id": "aba",
+      "aliases": [
+        "aba therapy",
+        "aba训练法",
+        "aba training",
+        "应用行为分析训练",
+        "应用行为分析疗法"
+      ]
+    }
+  ]
+}
