@@ -93,6 +93,28 @@ DIGITAL_ALGORITHM_MARKERS = (
     "分类器",
 )
 
+DERIVED_ENTITY_FLAG_PREFIXES = (
+    "assessment_tool_category:",
+)
+
+DERIVED_ENTITY_FLAGS = {
+    "isolated_entity",
+    "alias_type_conflict",
+    "same_name_duplicate",
+    "single_chunk_entity",
+}
+
+DERIVED_RELATION_FLAG_PREFIXES = (
+    "measurement_tool_category:",
+)
+
+DERIVED_RELATION_FLAGS = {
+    "single_evidence_relation",
+    "low_confidence",
+    "clinical_answer_requires_evidence_guardrail",
+    "self_relation",
+}
+
 GENERIC_TOOL_MARKERS = (
     "technology",
     "technique",
@@ -122,6 +144,17 @@ def classify_tool(entity: dict) -> str:
     if contains_any(haystack, GENERIC_TOOL_MARKERS):
         return "generic_method"
     return "unspecified_assessment"
+
+
+def preserved_flags(flags: list[str], derived_flags: set[str], derived_prefixes: tuple[str, ...]) -> list[str]:
+    out = []
+    for flag in flags:
+        if flag in derived_flags:
+            continue
+        if any(flag.startswith(prefix) for prefix in derived_prefixes):
+            continue
+        out.append(flag)
+    return out
 
 
 def evidence_level_summary(relation: dict, evidence_by_id: dict[str, dict]) -> str:
@@ -181,7 +214,11 @@ def annotate(input_dir: Path, output_dir: Path) -> dict:
     enriched_entities: list[dict] = []
     for entity in entities:
         row = dict(entity)
-        flags: list[str] = []
+        flags: list[str] = preserved_flags(
+            entity.get("quality_flags", []) or [],
+            DERIVED_ENTITY_FLAGS,
+            DERIVED_ENTITY_FLAG_PREFIXES,
+        )
         aliases = {normalize_key(entity.get("name", "")), normalize_key(entity.get("canonical_name", ""))}
         aliases.update(normalize_key(synonym) for synonym in entity.get("synonyms", []) or [])
         aliases = {alias for alias in aliases if alias}
@@ -223,7 +260,11 @@ def annotate(input_dir: Path, output_dir: Path) -> dict:
     enriched_relations: list[dict] = []
     for relation in relations:
         row = dict(relation)
-        flags: list[str] = []
+        flags: list[str] = preserved_flags(
+            relation.get("quality_flags", []) or [],
+            DERIVED_RELATION_FLAGS,
+            DERIVED_RELATION_FLAG_PREFIXES,
+        )
         src = entity_by_id.get(relation.get("src_entity_id"), {})
         dst = entity_by_id.get(relation.get("dst_entity_id"), {})
         support_count = int(relation.get("support_count") or 0)
