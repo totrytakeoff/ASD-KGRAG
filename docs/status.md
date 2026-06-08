@@ -11,7 +11,7 @@
 | 3. 分块 | 100% | 已完成 |
 | 4. 元数据补全 | 100% | 已完成 |
 | 5. 实体关系抽取 | 100% | 全量抽取 + 两轮失败重试已完成（7568/7568 成功，0 失败） |
-| 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成（基于 7568 条成功抽取；待执行 Neo4j 入库验证） |
+| 6. 归一化 + Neo4j 导出/入库 | 100% | 已完成并验证通过（基于 7568 条成功抽取） |
 | 7. Embedding + 向量库 | 100% | 已完成 |
 | 8. 混合检索原型 | 100% | 已验证通过 |
 | 9. KGRAG 问答原型 | 0% | 未开始 |
@@ -20,7 +20,7 @@
 
 一句话判断：
 
-`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%。当前主要剩余工作是执行 Neo4j 入库验证，并搭建 KGRAG 在线问答原型。`
+`离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证）；实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率达到 100%，Neo4j 最新入库验证通过。当前主要剩余工作是搭建 KGRAG 在线问答原型。`
 
 ---
 
@@ -117,6 +117,41 @@ nohup scripts/extraction/run_extraction_until_complete.sh >/tmp/asd_kgrag_extrac
 - NOT_INDICATED_FOR：8
 
 Neo4j 连接：bolt://localhost:7687，neo4j / asd-kgrag-local
+
+### 6.1 Neo4j 入库验证 100%
+
+验证时间：2026-06-08
+
+验证方式：
+
+- 启动本地 `docker compose` 服务
+- 清空 Neo4j 本地图数据库，避免旧数据影响验证
+- 执行 `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/load_current.cypher`
+- 执行 `validation_queries.cypher` 和额外计数查询
+- 执行 `scripts/retrieval/hybrid_search.py` smoke test，确认 Neo4j + Qdrant 混合检索仍可用
+
+Neo4j 实际入库计数：
+
+- Chunk：7568
+- Entity：3706
+- Evidence：7568
+- FROM：7568
+- FROM_CHUNK：7568
+- SUPPORTED_BY：1704
+- INDICATED_FOR：537
+- MEASURED_BY：257
+- COMORBID_WITH：83
+- SUITABLE_AGE：43
+- HAS_RISK：32
+- SUITABLE_SETTING：27
+- NOT_INDICATED_FOR：8
+
+混合检索 smoke test：
+
+- 查询：`ADOS autism diagnostic observation schedule`
+- 图检索：20 entities，42 relations，300 chunks
+- 向量检索：5 hits
+- top-5 中出现 `G+V` 双重命中结果，说明 Neo4j 图召回和 Qdrant 向量召回链路均可用
 
 ### 7. Embedding + 向量库 100%
 
@@ -225,7 +260,7 @@ tail -f data/logs/extraction/run_until_complete_*.log
 | R4 | 第一轮失败项 transient retry | 已完成 | - |
 | R5 | 第二轮重试剩余 115 条失败样本 | 已完成 | - |
 | R6 | 第二轮重试完成后统一 refresh normalized / Neo4j import / summary report | 已完成 | - |
-| R6b | 执行 Neo4j 入库验证 | 高 | 10min |
+| R6b | 执行 Neo4j 入库验证 | 已完成 | - |
 | R7 | 完善 hybrid_search：增加 graph-only fallback、增加 top-k 到向量结果里也返回 chunk text | 中 | 1h |
 
 ### 中期（3-5 天内）
@@ -272,4 +307,4 @@ Python 依赖（.venv）：
 
 ## 当前结论
 
-离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 85%。实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率 100%。下一步先执行 Neo4j 入库验证，再进入 KGRAG 问答原型。
+离线建库管线已完整打通（提取→清洗→分块→抽取→归一化→Neo4j+Qdrant入库→混合检索验证），当前全链路进度约 90%。实体关系抽取已完成全量抽取和两轮失败重试，成功覆盖率 100%，Neo4j 最新入库验证通过。下一步进入 KGRAG 问答原型。
