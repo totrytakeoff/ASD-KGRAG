@@ -1,0 +1,3 @@
+student_id,case_id,query,off_topic,missing_citation,over_claim,missing_guardrail,citation_relevance,suspicious_sentence,notes
+S01,CASE001,ADOS 是什么？,false,false,false,false,A,,回答基本相关
+S01,CASE002,某干预能不能治愈 ASD？,false,false,true,true,B,可以治愈 ASD,存在过度承诺

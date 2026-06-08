@@ -1,0 +1,3 @@
+student_id,chunk_id,title_ok,year_ok,readable,asd_related,severe_truncation,problem_type,notes
+S01,abc_c0001,true,true,true,true,false,,无明显问题
+S01,abc_c0002,false,true,true,true,false,title_error,标题似乎不是该文献

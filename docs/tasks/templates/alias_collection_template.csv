@@ -1,0 +1,3 @@
+student_id,entity_name,entity_type,chinese_name,english_full_name,abbreviation,aliases,version_or_variant,looks_same_concept,source_note,notes
+S01,ABA,Intervention,应用行为分析,Applied Behavior Analysis,ABA,ABA therapy;ABA训练法;应用行为分析训练,,true,干预综述,
+S01,ADOS-2,AssessmentTool,孤独症诊断观察量表第二版,Autism Diagnostic Observation Schedule Second Edition,ADOS-2,ADOS Second Edition,version,false,评估工具文献,版本边界需保留

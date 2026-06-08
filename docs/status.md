@@ -452,6 +452,46 @@ tail -f data/logs/extraction/run_until_complete_*.log
 
 ---
 
+## 学生协作任务包
+
+当前项目已经进入“QA 质量打磨 + 图谱质量持续修正”阶段，适合把一部分非代码、可模板化、可文件同步的任务拆给学生处理。
+
+已新增协作文档：
+
+- `docs/tasks/student_collaboration_plan.md`
+
+已新增模板：
+
+- `docs/tasks/templates/qa_question_collection_template.csv`
+- `docs/tasks/templates/qa_question_collection_template.jsonl`
+- `docs/tasks/templates/safety_question_template.csv`
+- `docs/tasks/templates/alias_collection_template.csv`
+- `docs/tasks/templates/qa_review_template.csv`
+- `docs/tasks/templates/chunk_metadata_review_template.csv`
+
+协作方式：
+
+- 当前没有服务器，不走在线系统。
+- 我们给学生发任务包和模板文件。
+- 学生只填写 CSV/JSONL/notes 文件。
+- 学生返还 zip 或结果文件。
+- 本地统一放入 `data/student_returns/` 后再检查、去重、合并。
+
+第一批推荐任务：
+
+| 任务 | 每人工作量 | 输出 |
+|------|------------|------|
+| QA 真实问题收集 | 20-30 条 | `QAQUESTION_<student_id>_<name>_result.csv` |
+| 安全/负面问题收集 | 10-20 条 | `SAFETYQUESTION_<student_id>_<name>_result.csv` |
+| 高价值实体别名候选 | 10 个实体 | `ALIAS_<student_id>_<name>_result.csv` |
+
+暂缓任务：
+
+- QA 回答审核：需要我们先批量生成 QA 输出。
+- chunk 元数据复核：需要我们先导出抽样 chunk CSV。
+
+---
+
 ## 推进计划表
 
 ### 近期（1-2 天内）

@@ -1,0 +1,3 @@
+{"student_id":"S01","question_id":"S01_Q001","category":"assessment","query":"ADOS 能不能直接诊断自闭症？","keywords":["ADOS","自闭症","诊断"],"requires_guardrail":true,"source_note":"来自评估工具相关综述","notes":""}
+{"student_id":"S01","question_id":"S01_Q002","category":"intervention","query":"ABA 对 ASD 儿童语言能力有没有帮助？","keywords":["ABA","ASD","语言能力"],"requires_guardrail":true,"source_note":"来自干预综述","notes":""}
+{"student_id":"S01","question_id":"S01_Q003","category":"comorbidity","query":"ASD 儿童常见睡眠问题有哪些？","keywords":["ASD","睡眠问题"],"requires_guardrail":true,"source_note":"来自共病主题文献","notes":""}

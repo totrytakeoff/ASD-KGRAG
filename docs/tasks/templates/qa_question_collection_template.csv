@@ -1,0 +1,4 @@
+student_id,question_id,category,query,keywords,requires_guardrail,source_note,notes
+S01,S01_Q001,assessment,ADOS 能不能直接诊断自闭症？,ADOS;自闭症;诊断,true,来自评估工具相关综述,
+S01,S01_Q002,intervention,ABA 对 ASD 儿童语言能力有没有帮助？,ABA;ASD;语言能力,true,来自干预综述,
+S01,S01_Q003,comorbidity,ASD 儿童常见睡眠问题有哪些？,ASD;睡眠问题,true,来自共病主题文献,
