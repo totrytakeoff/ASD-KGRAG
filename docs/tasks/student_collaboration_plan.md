@@ -6,6 +6,17 @@
 
 目标不是让学生改代码，也不是让学生判断复杂医学结论，而是让他们完成可模板化、可检查、可批量同步的辅助任务。
 
+注意：本文档是给项目负责人看的任务组织方案。可以直接发给学生看的执行说明在：
+
+```text
+docs/tasks/student_facing/README_for_students.md
+docs/tasks/student_facing/QAQUESTION_student_task.md
+docs/tasks/student_facing/SAFETYQUESTION_student_task.md
+docs/tasks/student_facing/ALIAS_student_task.md
+docs/tasks/student_facing/QAREVIEW_student_task.md
+docs/tasks/student_facing/CHUNKREVIEW_student_task.md
+```
+
 ---
 
 ## 当前项目状态

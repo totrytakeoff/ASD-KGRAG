@@ -459,6 +459,12 @@ tail -f data/logs/extraction/run_until_complete_*.log
 已新增协作文档：
 
 - `docs/tasks/student_collaboration_plan.md`
+- `docs/tasks/student_facing/README_for_students.md`
+- `docs/tasks/student_facing/QAQUESTION_student_task.md`
+- `docs/tasks/student_facing/SAFETYQUESTION_student_task.md`
+- `docs/tasks/student_facing/ALIAS_student_task.md`
+- `docs/tasks/student_facing/QAREVIEW_student_task.md`
+- `docs/tasks/student_facing/CHUNKREVIEW_student_task.md`
 
 已新增模板：
 
