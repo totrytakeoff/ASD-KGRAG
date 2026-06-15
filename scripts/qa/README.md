@@ -2,7 +2,7 @@
 
 最小 KGRAG 问答原型：复用 Neo4j 图召回、Qdrant 向量召回和 OpenAI-compatible LLM 接口，生成带引用和安全护栏的中文回答。
 
-已验证能力：
+## 已验证能力
 
 - 文献证据引用：`[C1]`
 - 图谱关系引用：`[G1]`
@@ -96,7 +96,7 @@ scripts/qa/eval_questions.jsonl
 - `summary.json`：通过率和聚合指标
 - `results.jsonl`：每题的召回、回答、引用和护栏检查结果
 
-当前评估基线：
+## 当前评估基线
 
 - dry-run：10/10 通过
 - 真实生成小样本：4/4 通过

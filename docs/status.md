@@ -1,6 +1,6 @@
 # 项目状态记录
 
-更新时间：2026-06-08
+更新时间：2026-06-15
 
 ## 总体进度
 
@@ -474,6 +474,14 @@ tail -f data/logs/extraction/run_until_complete_*.log
 - `docs/tasks/templates/alias_collection_template.csv`
 - `docs/tasks/templates/qa_review_template.csv`
 - `docs/tasks/templates/chunk_metadata_review_template.csv`
+
+已新增基础设施文档：
+
+- `docs/ops/quickstart.md`
+- `docs/ops/data_assets.md`
+- `docs/ops/database_migration.md`
+- `docs/ops/backup_restore.md`
+- `docs/ops/troubleshooting.md`
 
 协作方式：
 

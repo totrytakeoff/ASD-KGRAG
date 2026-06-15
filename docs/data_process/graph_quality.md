@@ -24,7 +24,7 @@
 - `data/processed/normalized_full_ab_nonbook_v5_current_curated_v2_quality/`
 - `data/processed/neo4j_import_full_ab_nonbook_v5_current_curated_v2_quality/`
 
-当前 Neo4j 挂载目录 `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/` 已同步为 v2 curated 质量增强版导出。
+当前 Neo4j 挂载目录仍是 `data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/`。如果要切换到其他 curated 导出目录，需要同步更新 `docker-compose.yml` 的挂载路径或手工替换导入包。
 
 ## 标注字段
 

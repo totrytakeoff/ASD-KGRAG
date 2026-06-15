@@ -1,73 +1,65 @@
-# Graph Export Scripts
+# Neo4j 图谱导出与导入
 
-## Main script
+## 当前导入包
 
-- `export_neo4j_import.py`
-  - Inputs:
-    - `data/processed/normalized_full/entities.jsonl`
-    - `data/processed/normalized_full/relations.jsonl`
-    - `data/processed/normalized_full/evidence.jsonl`
-    - `data/processed/chunks_full/chunks.jsonl`
-  - Outputs:
-    - `neo4j_nodes_entity.csv`
-    - `neo4j_nodes_chunk.csv`
-    - `neo4j_nodes_evidence.csv`
-    - `neo4j_relationships_entity.csv`
-    - `neo4j_relationships_supports.csv`
-    - `neo4j_relationships_from.csv`
+当前本地 Docker 默认挂载：
 
-## Purpose
-
-Prepare a flat import package for Neo4j bulk import or later Cypher-based loading.
-
-## Current Cypher loading workflow
-
-Generate loader and validation query files for the current revalidated export:
-
-```bash
-python scripts/graph/generate_neo4j_load_cypher.py
-python scripts/graph/write_validation_queries.py
+```text
+data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/
 ```
 
-Outputs:
+该目录是当前 KGRAG 原型使用的 Neo4j 导入基线，包含：
 
+- `neo4j_nodes_entity.csv`
+- `neo4j_nodes_chunk.csv`
+- `neo4j_nodes_evidence.csv`
+- `neo4j_relationships_entity.csv`
+- `neo4j_relationships_supports.csv`
+- `neo4j_relationships_from.csv`
 - `load_current.cypher`
 - `validation_queries.cypher`
+- `summary.json`
 
-The generated loader expects CSV files to be copied into a Neo4j import
-subdirectory named `asd_kgrag`.
+当前规模：
 
-Example:
+- Entity：3684
+- Chunk：7568
+- Evidence：7568
+- Entity relations：978
 
-```bash
-mkdir -p "$NEO4J_HOME/import/asd_kgrag"
-cp data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/*.csv \
-  "$NEO4J_HOME/import/asd_kgrag/"
-cp data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/*.cypher .
+## 入口脚本
 
-cypher-shell -u neo4j -p '<password>' -f load_current.cypher
-cypher-shell -u neo4j -p '<password>' -f validation_queries.cypher
-```
+- `export_neo4j_import.py`：从 normalized JSONL 导出 Neo4j CSV
+- `generate_neo4j_load_cypher.py`：生成 Cypher loader
+- `write_validation_queries.py`：生成验证查询
+- `annotate_graph_quality.py`：质量标注
+- `apply_entity_merge_rules.py`：保守实体合并/curated alias 合并
 
-Note: the loader uses `apoc.merge.relationship` to preserve extracted relation
-types such as `MEASURED_BY`, `INDICATED_FOR`, and `COMORBID_WITH`. Enable APOC in
-the target Neo4j instance before running it.
+## 本地 Neo4j
 
-## Local Docker Neo4j
-
-This repository includes a local Neo4j Compose file with APOC enabled:
+启动：
 
 ```bash
 docker compose up -d
 ```
 
-Browser:
+Browser：
 
 - http://localhost:7474
 - user: `neo4j`
 - password: `asd-kgrag-local`
 
-Run the current loader:
+## 导入当前图谱
+
+如果 Neo4j 中有旧数据，先清空：
+
+```bash
+docker exec asd-kgrag-neo4j cypher-shell \
+  -u neo4j -p asd-kgrag-local \
+  "MATCH (n) DETACH DELETE n"
+```
+
+执行导入：
 
 ```bash
 docker exec -i asd-kgrag-neo4j cypher-shell \
@@ -75,10 +67,38 @@ docker exec -i asd-kgrag-neo4j cypher-shell \
   < data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/load_current.cypher
 ```
 
-Run validation queries:
+执行验证：
 
 ```bash
 docker exec -i asd-kgrag-neo4j cypher-shell \
   -u neo4j -p asd-kgrag-local \
   < data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated/validation_queries.cypher
+```
+
+快速计数：
+
+```bash
+docker exec asd-kgrag-neo4j cypher-shell \
+  -u neo4j -p asd-kgrag-local \
+  "MATCH (n) RETURN labels(n) AS labels, count(*) AS count ORDER BY labels"
+```
+
+## APOC 要求
+
+`load_current.cypher` 使用 `apoc.merge.relationship` 保留抽取关系类型，例如：
+
+- `MEASURED_BY`
+- `INDICATED_FOR`
+- `COMORBID_WITH`
+
+本仓库 `docker-compose.yml` 已启用 APOC。外部 Neo4j 需要手动安装并启用 APOC。
+
+## 迁移建议
+
+Neo4j 推荐迁移方式是同步导入包并重新导入，不推荐只搬 Docker volume。
+
+完整迁移步骤见：
+
+```text
+docs/ops/database_migration.md
 ```
