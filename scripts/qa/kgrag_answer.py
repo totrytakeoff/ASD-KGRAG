@@ -262,14 +262,18 @@ def relation_relevance(row: dict, keywords: list[str]) -> tuple[float, int, floa
     )
 
 
-def retrieve_context(args) -> dict:
+def retrieve_context(args, *, driver=None, embed_model=None, qdrant_client=None) -> dict:
     keywords = expand_keywords(args.keywords if args.keywords else auto_keywords(args.query))
-    driver = GraphDatabase.driver(args.neo4j_url, auth=(args.neo4j_user, args.neo4j_pass))
+    own_driver = driver is None
+    if own_driver:
+        driver = GraphDatabase.driver(args.neo4j_url, auth=(args.neo4j_user, args.neo4j_pass))
+    if embed_model is None:
+        embed_model = SentenceTransformer(args.model)
+    if qdrant_client is None:
+        qdrant_client = QdrantClient(url=args.qdrant_url)
     try:
         graph_result = graph_search(driver, keywords)
-        model = SentenceTransformer(args.model)
-        client = QdrantClient(url=args.qdrant_url)
-        vector_hits = vector_search(client, model, args.query, args.collection, args.retrieval_k)
+        vector_hits = vector_search(qdrant_client, embed_model, args.query, args.collection, args.retrieval_k)
         merged_hits = merge_results(graph_result["chunk_ids"], vector_hits)
 
         specific = specific_keywords(keywords)
@@ -357,7 +361,8 @@ def retrieve_context(args) -> dict:
             )
         contexts = contexts[: args.context_k]
     finally:
-        driver.close()
+        if own_driver:
+            driver.close()
 
     return {
         "query": args.query,
@@ -594,8 +599,8 @@ def summarize_context(context: dict) -> dict:
     }
 
 
-def answer_query(args) -> dict:
-    context = retrieve_context(args)
+def answer_query(args, *, driver=None, embed_model=None, qdrant_client=None) -> dict:
+    context = retrieve_context(args, driver=driver, embed_model=embed_model, qdrant_client=qdrant_client)
     messages = build_prompt(context, args.max_chars_per_chunk)
     result = {
         "query": context["query"],

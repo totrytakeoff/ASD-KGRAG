@@ -1,0 +1,20 @@
+{
+  "active_model": {
+    "name": "deepseek-ai/DeepSeek-V4-Flash",
+    "base_url": "https://api.siliconflow.cn/v1/chat/completions",
+    "api_key": "sk-yzaxeuhfpqkvhkiczhqmaclltmorfyvidkgdrfimqrehqcdu",
+    "timeout": 90,
+    "max_tokens": 1200,
+    "max_retries": 1
+  },
+  "eval_models": [
+    {
+      "name": "deepseek-ai/DeepSeek-V4-Flash",
+      "base_url": "https://api.siliconflow.cn/v1/chat/completions",
+      "api_key": "sk-yzaxeuhfpqkvhkiczhqmaclltmorfyvidkgdrfimqrehqcdu",
+      "timeout": 90,
+      "max_tokens": 1200,
+      "enabled": true
+    }
+  ]
+}

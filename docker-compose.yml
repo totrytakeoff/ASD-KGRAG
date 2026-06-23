@@ -24,6 +24,19 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  qa-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.qa
+    container_name: asd-kgrag-qa
+    ports:
+      - "8010:8010"
+    env_file:
+      - .env
+    depends_on:
+      - neo4j
+      - qdrant
+
 volumes:
   neo4j_data:
   neo4j_logs:

@@ -19,3 +19,7 @@ ASD-KGRAG.context.md
 .env
 .env.*
 !.env.example
+
+.playwright-mcp/
+node_modules
+dist

@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements-qa.txt .
+RUN pip install --no-cache-dir -r requirements-qa.txt
+
+COPY scripts/ scripts/
+COPY config/ config/
+COPY .env* ./
+
+EXPOSE 8010
+
+CMD ["python", "scripts/qa/kgrag_api.py", "--host", "0.0.0.0"]
