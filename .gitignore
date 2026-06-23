@@ -23,3 +23,8 @@ ASD-KGRAG.context.md
 .playwright-mcp/
 node_modules
 dist
+
+# Playwright screenshots
+*-page
+*-view
+*-check
