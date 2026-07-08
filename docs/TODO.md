@@ -72,10 +72,10 @@
 
 - [x] **P3-1 端到端 smoke 脚本** — `scripts/qa/e2e_check.sh` 已串起静态检查、Neo4j/Qdrant health/data check、FastAPI `/health` + `/ask` dry-run、CLI dry-run、批评估 dry-run；`--with-real` 可选跑安全/边界真实生成 smoke。
 
-### Agent 化 (暂搁)
+### Agent 化
 
-- [ ] **A1 工具化检索** — 检索包装为 function-calling tools
-- [ ] **A2 多步迭代检索** — query rewrite + sub-question + retrieve-evaluate-retrieve
+- [x] **A1 工具化检索** — 已新增受控工具工作流：`agent_tools.py` / `agent_trace.py` / `agent_runner.py`，将查询意图、query expansion、检索、证据检查、回答草稿和答案校验拆为可 trace 步骤；现阶段不替代默认 `/ask`。
+- [x] **A2 多步迭代检索** — 已加入受控补检索：首轮检索后按意图和证据 flags 判断是否需要补检索，最多执行 1 次固定计划 follow-up retrieval，并合并上下文/图谱关系后再生成与校验；诊断边界自然问法可从纯向量证据补到图谱关系证据。
 - [ ] **A3 查询路由** — 分流器: 知识问答 / 干预建议 / 安全拒答
 - [ ] **A4 独立拒答决策器** — 分类器替代纯 prompt 护栏
 - [ ] **A5 对比评测框架** — 纯 LLM vs 纯 RAG vs KGRAG

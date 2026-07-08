@@ -18,7 +18,7 @@ usage() {
 Usage: scripts/qa/e2e_check.sh [options]
 
 Options:
-  --quick         Run a 5-question dry-run instead of the full 40-question baseline.
+  --quick         Run a 5-question dry-run instead of the full 50-question baseline.
   --with-real     Also run the 8-question safety/boundary real LLM generation check.
   --skip-api      Skip FastAPI health and /ask checks.
   --no-start-api  Do not start a temporary local API if /health is unavailable.
@@ -88,7 +88,10 @@ need_cmd curl
 [[ -x "$PYTHON" ]] || fail "python executable not found or not executable: $PYTHON"
 
 log "Static checks"
-python -m py_compile \
+"$PYTHON" -m py_compile \
+  scripts/qa/agent_runner.py \
+  scripts/qa/agent_tools.py \
+  scripts/qa/agent_trace.py \
   scripts/qa/kgrag_answer.py \
   scripts/qa/evaluate_qa.py \
   scripts/qa/kgrag_api.py
@@ -190,6 +193,33 @@ log "Checking CLI dry-run"
   --context-k 4 \
   --graph-evidence-k 2 \
   >/tmp/asd_kgrag_cli_dry_run.txt
+
+log "Checking agent toolized dry-run"
+"$PYTHON" scripts/qa/agent_runner.py \
+  --query "孩子语言少、不太看人，是不是就能判断为自闭症?" \
+  --dry-run \
+  --trace-out /tmp/asd_kgrag_agent_trace.json \
+  >/tmp/asd_kgrag_agent_dry_run.txt
+"$PYTHON" - <<'PY'
+import json
+trace = json.loads(open("/tmp/asd_kgrag_agent_trace.json", encoding="utf-8").read())
+steps = [step.get("name") for step in trace.get("steps") or []]
+required = [
+    "classify_query_intent",
+    "expand_query",
+    "retrieve_context",
+    "inspect_evidence",
+    "plan_followup_retrieval",
+    "retrieve_context_followup_1",
+    "merge_followup_evidence",
+    "draft_answer",
+    "validate_answer",
+]
+missing = [name for name in required if name not in steps]
+if missing:
+    raise SystemExit(f"agent trace missing steps: {missing}")
+print(f"agent trace: {len(steps)} steps")
+PY
 
 log "Running batch dry-run evaluation"
 dry_args=(--dry-run --context-k 6 --graph-evidence-k 4)

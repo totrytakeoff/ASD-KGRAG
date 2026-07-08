@@ -68,6 +68,28 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
   -d '{"query":"ADOS 是什么? 它在 ASD 评估中有什么作用?","dry_run":true,"context_k":4,"graph_evidence_k":2}'
 ```
 
+## Agent 工具化入口
+
+第一步 agent 化采用受控工具工作流，不替代现有 `/ask` 和 `kgrag_answer.py`。它将查询意图、query expansion、检索、证据检查、必要时最多一次补检索、回答草稿和答案校验拆为可 trace 的步骤：
+
+```bash
+.venv/bin/python scripts/qa/agent_runner.py \
+  --query "ADOS 是什么? 它在 ASD 评估中有什么作用?" \
+  --dry-run \
+  --trace-out data/agent_traces/sample_ados.json
+```
+
+输出完整 JSON：
+
+```bash
+.venv/bin/python scripts/qa/agent_runner.py \
+  --query "孩子语言少、不太看人，是不是就能判断为自闭症?" \
+  --dry-run \
+  --json
+```
+
+补检索触发条件保持保守：首轮证据不足，或诊断/安全/干预类问题缺少图谱关系时，才执行 1 次固定计划 follow-up retrieval。trace 中会出现 `plan_followup_retrieval`、`retrieve_context_followup_1` 和 `merge_followup_evidence`。
+
 ## 批量评估
 
 评估题集：
