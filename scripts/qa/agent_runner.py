@@ -52,13 +52,17 @@ def to_namespace(cli_args: argparse.Namespace):
 
 def print_summary(result: dict) -> None:
     agent = result.get("agent") or {}
-    intent = (agent.get("intent") or {}).get("intent")
+    route = agent.get("intent") or {}
+    route_name = route.get("route") or route.get("intent")
     evidence = agent.get("evidence") or {}
+    policy = evidence.get("answer_policy") or {}
     validation = agent.get("validation") or {}
     context = result.get("context") or {}
     print(f"query: {result.get('query')}")
     print(f"dry_run: {result.get('dry_run')}")
-    print(f"intent: {intent}")
+    print(f"route: {route_name}")
+    print(f"answer_mode: {policy.get('answer_mode')}")
+    print(f"forbidden_claims: {json.dumps(policy.get('forbidden_claims') or [], ensure_ascii=False)}")
     print(f"contexts: {len(context.get('contexts') or [])}")
     print(f"relations: {len(context.get('relations') or [])}")
     print(f"evidence_flags: {json.dumps(evidence.get('flags') or {}, ensure_ascii=False)}")

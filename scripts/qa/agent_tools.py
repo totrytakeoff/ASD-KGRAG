@@ -20,6 +20,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "qa"))
 
+from agent_policy import (  # noqa: E402
+    inspect_evidence,
+    merge_answer_policy,
+    should_run_followup_retrieval,
+)
+from agent_router import route_query  # noqa: E402
 from evaluate_qa import evaluate_result  # noqa: E402
 from kgrag_answer import (  # noqa: E402
     build_prompt,
@@ -29,73 +35,6 @@ from kgrag_answer import (  # noqa: E402
     retrieve_context,
     summarize_context,
 )
-
-
-INTENT_RULES = {
-    "safety_boundary": (
-        "治愈",
-        "直接治疗",
-        "推荐用药",
-        "停药",
-        "不用专业评估",
-        "无需专业评估",
-        "替代诊断",
-        "确定有效",
-        "高压氧",
-    ),
-    "diagnostic_boundary": (
-        "能诊断",
-        "判断是",
-        "能判断",
-        "就能判断",
-        "是不是自闭症",
-        "是不是孤独症",
-        "只凭",
-        "量表分数",
-        "代替诊断",
-    ),
-    "intervention_advice": (
-        "干预",
-        "训练",
-        "治疗",
-        "aba",
-        "eibi",
-        "esdm",
-        "家长培训",
-        "融合支持",
-        "感觉统合",
-    ),
-}
-
-RESEARCH_ONLY_QA_USAGE = "research_context_only"
-
-
-def classify_query_intent(query: str) -> dict[str, Any]:
-    normalized = (query or "").strip().lower()
-    matched: dict[str, list[str]] = {}
-    for intent, terms in INTENT_RULES.items():
-        hits = [term for term in terms if term.lower() in normalized]
-        if hits:
-            matched[intent] = hits
-    if "safety_boundary" in matched:
-        intent = "safety_boundary"
-    elif "diagnostic_boundary" in matched:
-        intent = "diagnostic_boundary"
-    elif "intervention_advice" in matched:
-        intent = "intervention_advice"
-    elif normalized:
-        intent = "knowledge_qa"
-    else:
-        intent = "unknown"
-    return {
-        "intent": intent,
-        "matched_terms": matched,
-        "requires_guardrail": intent in {
-            "safety_boundary",
-            "diagnostic_boundary",
-            "intervention_advice",
-        },
-    }
 
 
 def expand_query(query: str, keywords: list[str] | None = None) -> dict[str, Any]:
@@ -235,63 +174,6 @@ def merge_retrieved_contexts(primary: dict[str, Any], supplemental: list[dict[st
     }
 
 
-def inspect_evidence(context_summary: dict[str, Any]) -> dict[str, Any]:
-    contexts = context_summary.get("contexts") or []
-    relations = context_summary.get("relations") or []
-    graph_counts = context_summary.get("graph_counts") or {}
-    low_evidence = [
-        item
-        for item in contexts
-        if str(item.get("evidence_level") or "").upper() in {"C", "D", "LOW"}
-    ]
-    research_only_relations = [
-        row for row in relations if row.get("qa_usage") == RESEARCH_ONLY_QA_USAGE
-    ]
-    flags = {
-        "has_contexts": bool(contexts),
-        "has_relations": bool(relations),
-        "has_graph_entities": int(graph_counts.get("entities") or 0) > 0,
-        "has_low_evidence_context": bool(low_evidence),
-        "has_research_only_context": bool(research_only_relations),
-        "needs_more_retrieval": len(contexts) < 3 and not relations,
-    }
-    return {
-        "flags": flags,
-        "counts": {
-            "contexts": len(contexts),
-            "relations": len(relations),
-            "low_evidence_contexts": len(low_evidence),
-            "research_only_relations": len(research_only_relations),
-        },
-        "answer_policy": {
-            "requires_guardrail": flags["has_low_evidence_context"] or flags["has_research_only_context"],
-            "requires_research_boundary": flags["has_research_only_context"],
-            "allow_clinical_certainty": not flags["has_low_evidence_context"]
-            and not flags["has_research_only_context"],
-        },
-    }
-
-
-def merge_answer_policy(intent: dict[str, Any], evidence_report: dict[str, Any]) -> dict[str, Any]:
-    policy = dict(evidence_report.get("answer_policy") or {})
-    intent_requires_guardrail = bool(intent.get("requires_guardrail"))
-    policy["requires_guardrail"] = bool(policy.get("requires_guardrail")) or intent_requires_guardrail
-    if (intent.get("intent") or "") in {"safety_boundary", "diagnostic_boundary"}:
-        policy["allow_clinical_certainty"] = False
-    evidence_report["answer_policy"] = policy
-    return evidence_report
-
-
-def should_run_followup_retrieval(intent: dict[str, Any], evidence_report: dict[str, Any]) -> bool:
-    flags = evidence_report.get("flags") or {}
-    intent_name = intent.get("intent")
-    if flags.get("needs_more_retrieval"):
-        return True
-    if intent_name in {"diagnostic_boundary", "safety_boundary", "intervention_advice"}:
-        return not flags.get("has_relations") or not flags.get("has_graph_entities")
-    return False
-
-
 def plan_followup_retrieval(
     query: str,
     intent: dict[str, Any],
@@ -301,7 +183,7 @@ def plan_followup_retrieval(
     if not should_run_followup_retrieval(intent, evidence_report):
         return []
 
-    intent_name = intent.get("intent")
+    intent_name = intent.get("route") or intent.get("intent")
     base_keywords = expansion.get("expanded_keywords") or expansion.get("keywords") or []
     if intent_name == "diagnostic_boundary":
         return [
@@ -374,11 +256,13 @@ def validate_answer_tool(
     result: dict[str, Any],
     evidence_report: dict[str, Any],
     elapsed_seconds: float,
+    route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy = evidence_report.get("answer_policy") or {}
+    route = route or route_query(query)
     question = {
         "id": "agent_query",
-        "category": classify_query_intent(query)["intent"],
+        "category": route.get("route") or route.get("intent"),
         "query": query,
         "requires_guardrail": bool(policy.get("requires_guardrail")),
         "requires_research_boundary": bool(policy.get("requires_research_boundary")),
@@ -441,7 +325,7 @@ def run_toolized_agent(
     workflow_start = time.time()
 
     started = time.time()
-    intent = classify_query_intent(args.query)
+    intent = route_query(args.query)
     if trace:
         trace.add_step("classify_query_intent", inputs={"query": args.query}, outputs=intent, started_at=started)
 
@@ -537,7 +421,7 @@ def run_toolized_agent(
         trace.add_step("draft_answer", outputs=redact_for_trace(drafted), started_at=started)
 
     started = time.time()
-    validation = validate_answer_tool(args.query, result, evidence, time.time() - workflow_start)
+    validation = validate_answer_tool(args.query, result, evidence, time.time() - workflow_start, intent)
     result["agent"]["validation"] = validation
     if trace:
         trace.add_step("validate_answer", outputs=validation, started_at=started)

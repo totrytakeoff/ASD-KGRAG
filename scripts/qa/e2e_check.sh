@@ -90,6 +90,8 @@ need_cmd curl
 log "Static checks"
 "$PYTHON" -m py_compile \
   scripts/qa/agent_runner.py \
+  scripts/qa/agent_router.py \
+  scripts/qa/agent_policy.py \
   scripts/qa/agent_tools.py \
   scripts/qa/agent_trace.py \
   scripts/qa/kgrag_answer.py \

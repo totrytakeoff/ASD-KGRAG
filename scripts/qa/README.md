@@ -90,6 +90,13 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
 
 补检索触发条件保持保守：首轮证据不足，或诊断/安全/干预类问题缺少图谱关系时，才执行 1 次固定计划 follow-up retrieval。trace 中会出现 `plan_followup_retrieval`、`retrieve_context_followup_1` 和 `merge_followup_evidence`。
 
+Agent 路由和安全策略已独立为规则模块：
+
+- `agent_router.py`：输出 `route`、`retrieval_focus`、`requires_guardrail` 和 `requires_followup_retrieval`。
+- `agent_policy.py`：输出 `answer_mode`、`requires_guardrail`、`requires_research_boundary`、`allow_clinical_certainty` 和 `forbidden_claims`。
+
+当前策略保持可解释、可回归，不使用 LLM 分类器。
+
 ## 批量评估
 
 评估题集：
