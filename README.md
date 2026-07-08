@@ -103,6 +103,26 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
   --graph-evidence-k 2
 ```
 
+### 7. 端到端 Smoke
+
+默认检查静态语法、Neo4j/Qdrant 数据、FastAPI `/health` + `/ask` dry-run、CLI dry-run 和全量批评估 dry-run：
+
+```bash
+scripts/qa/e2e_check.sh
+```
+
+快速检查：
+
+```bash
+scripts/qa/e2e_check.sh --quick
+```
+
+包含安全/边界真实生成小样本：
+
+```bash
+scripts/qa/e2e_check.sh --with-real
+```
+
 ## 数据资产
 
 `data/` 不进入 git。新机器只拉代码不能完整运行，需要额外同步数据资产。

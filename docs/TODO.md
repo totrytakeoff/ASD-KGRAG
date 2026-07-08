@@ -1,6 +1,6 @@
 # ASD-KGRAG 现状与后续发展
 
-更新时间: 2026-06-23
+更新时间: 2026-07-08
 
 ---
 
@@ -54,23 +54,23 @@
 
 ### P0 阻塞性 — 评估基线
 
-- [ ] **P0-1 扩评估题集到 30-50 题** — 当前 10 题。扩展到覆盖 assessment / intervention / comorbidity / risk / safety 五类,作为后续所有改动的量化基线。可利用 CSV 批量导入快速扩充。
-- [ ] **P0-2 批评估性能优化** — embedding model / QdrantClient / Neo4j driver 提升为批处理级单例缓存,目标 30 题干跑 < 1 分钟。
+- [x] **P0-1 扩评估题集到 30-50 题** — 已扩到 50 题，覆盖 assessment / intervention / comorbidity / risk / safety / qa_boundary / query_quality 七类。最新 dry-run 基线：50/50。
+- [x] **P0-2 批评估性能优化** — CLI 批评估已复用 embedding model / QdrantClient / Neo4j driver。50 题 dry-run约半分钟内完成。
 
 ### P1 可信度
 
-- [ ] **P1-1 拒答/护栏评估指标** — `evaluate_qa.py` 加护栏触发检测,验证 `requires_guardrail=true` 的题是否真触发拒答/护栏语。
-- [ ] **P1-2 research_context_only 误用检测** — 检查 `qa_usage=research_context_only` 的关系是否被错误当作临床确定结论引用。
+- [x] **P1-1 拒答/护栏评估指标** — `evaluate_qa.py` 已加入护栏触发检测。安全/边界真实生成小样本 8/8 通过。
+- [x] **P1-2 research_context_only 误用检测** — 已加入研究边界与临床过度表述检测，并对否定句做误判规避。
 
 ### P2 召回/截断质量
 
-- [ ] **P2-1 中文查询质量改善** — 评估 `bge-large-zh` 或加 LLM query rewrite,提升中文 G+V 双重命中率。
-- [ ] **P2-2 图谱降噪 + alias 补全** — 过滤孤立/单 chunk 实体污染召回;补全 ADOS/ADI-R/M-CHAT-R/F 等版本边界 alias。
-- [ ] **P2-3 prompt 截断策略改进** — `trim_text` 改为多命中窗口合并或按命中最密集区间截取。
+- [x] **P2-1 中文查询质量改善** — 已加入 deterministic query rewrite / 多查询向量检索，不更换 embedding、不重建 Qdrant；新增 5 道中文自然问法评估题，dry-run 50/50，query_quality 真实生成 5/5。
+- [x] **P2-2 图谱降噪 + alias 补全** — 已补 query-only alias map，覆盖 ADOS/ADOS-2、ADI-R、M-CHAT/R/F、CARS、ABC、DSM、SRS、SCQ、AQ，以及 ADI-R / EIBI / 家长培训 / 早产围产期 / 药物 / 高压氧等高价值查询；检索层已加入实体去重、具体关键词优先、质量字段降噪和类型意图加权，不直接改写 Neo4j 图谱数据。
+- [x] **P2-3 prompt 截断策略改进** — `trim_text` 已改为按关键词命中最密集区间截取，避免长 chunk 中首个弱命中遮蔽后续关键证据。
 
 ### P3 工程化
 
-- [ ] **P3-1 端到端 smoke 脚本** — `e2e_check.sh` 串起 health check + dry-run + 真实生成 + 批评估 smoke。
+- [x] **P3-1 端到端 smoke 脚本** — `scripts/qa/e2e_check.sh` 已串起静态检查、Neo4j/Qdrant health/data check、FastAPI `/health` + `/ask` dry-run、CLI dry-run、批评估 dry-run；`--with-real` 可选跑安全/边界真实生成 smoke。
 
 ### Agent 化 (暂搁)
 

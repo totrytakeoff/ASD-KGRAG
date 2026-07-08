@@ -103,8 +103,12 @@ export default function DashboardGraph() {
     return <div className="text-sm text-gray-500">暂无图谱数据</div>;
   }
 
-  const typeCount = [...new Set(data.nodes.map((n) => n.type))].reduce(
-    (acc, t) => ({ ...acc, [t]: data.nodes.filter((n) => n.type === t).length }), {} as Record<string, number>,
+  const typeCount = [...new Set(data.nodes.map((n) => String(n.type)))].reduce(
+    (acc, type) => {
+      acc[type] = data.nodes.filter((n) => String(n.type) === type).length;
+      return acc;
+    },
+    {} as Record<string, number>,
   );
 
   return (

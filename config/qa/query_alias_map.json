@@ -1,0 +1,107 @@
+{
+  "description": "Query-only alias groups for retrieval expansion. These aliases are not graph merge rules; version-specific tools remain separate graph entities.",
+  "groups": [
+    {
+      "group_id": "ados",
+      "aliases": [
+        "autism diagnostic observation schedule",
+        "autism diagnostic observation schedule generic",
+        "孤独症诊断观察量表",
+        "自闭症诊断观察量表"
+      ]
+    },
+    {
+      "group_id": "ados-2",
+      "aliases": [
+        "ados",
+        "ados 2",
+        "autism diagnostic observation schedule second edition",
+        "autism diagnostic observation schedule-2",
+        "孤独症诊断观察量表第二版",
+        "自闭症诊断观察量表第二版"
+      ]
+    },
+    {
+      "group_id": "adi-r",
+      "aliases": [
+        "adi r",
+        "autism diagnostic interview-revised",
+        "autism diagnostic interview revised",
+        "孤独症诊断访谈修订版",
+        "自闭症诊断访谈修订版"
+      ]
+    },
+    {
+      "group_id": "m-chat-r/f",
+      "aliases": [
+        "m-chat",
+        "m-chat/f",
+        "m-chat-r",
+        "m chat r f",
+        "modified checklist for autism in toddlers",
+        "modified checklist for autism in toddlers revised with follow-up",
+        "改良婴幼儿孤独症筛查量表",
+        "改良版婴幼儿孤独症筛查量表"
+      ]
+    },
+    {
+      "group_id": "cars",
+      "aliases": [
+        "cars-2",
+        "cars2",
+        "childhood autism rating scale",
+        "childhood autism rating scale second edition",
+        "儿童孤独症评定量表",
+        "儿童自闭症评定量表"
+      ]
+    },
+    {
+      "group_id": "abc",
+      "aliases": [
+        "abc量表",
+        "autism behavior checklist",
+        "aberrant behavior checklist",
+        "aberrant behavior checklist-community",
+        "abc-c",
+        "孤独症行为量表",
+        "自闭症行为量表"
+      ]
+    },
+    {
+      "group_id": "dsm",
+      "aliases": [
+        "dsm-iv",
+        "dsm iv",
+        "dsm-5",
+        "dsm 5",
+        "diagnostic and statistical manual of mental disorders",
+        "精神障碍诊断与统计手册"
+      ]
+    },
+    {
+      "group_id": "srs",
+      "aliases": [
+        "social responsiveness scale",
+        "社会反应量表",
+        "社会反应性量表"
+      ]
+    },
+    {
+      "group_id": "scq",
+      "aliases": [
+        "social communication questionnaire",
+        "社会沟通问卷",
+        "社交沟通问卷"
+      ]
+    },
+    {
+      "group_id": "aq",
+      "aliases": [
+        "autism-spectrum quotient",
+        "autism spectrum quotient",
+        "孤独症谱系商数",
+        "自闭症谱系商数"
+      ]
+    }
+  ]
+}

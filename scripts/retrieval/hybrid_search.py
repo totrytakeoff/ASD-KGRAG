@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
@@ -18,28 +19,109 @@ DEFAULT_MODEL = 'BAAI/bge-small-zh-v1.5'
 DEFAULT_COLLECTION = 'asd_kgrag_chunks'
 
 
+GENERIC_KEYWORDS = {'asd', 'autism', '孤独症', '自闭症', '孤独症谱系障碍', '自闭症谱系障碍'}
+
+
+def normalize_key(text):
+    return re.sub(r'\s+', ' ', (text or '').strip().lower())
+
+
+def is_generic_keyword(keyword):
+    return normalize_key(keyword) in GENERIC_KEYWORDS
+
+
+def entity_match_score(entity):
+    exact = 1 if entity.get('exact_match') else 0
+    specific = 1 if any(not is_generic_keyword(kw) for kw in entity.get('matched_keywords', [])) else 0
+    source_chunks = int(entity.get('source_chunk_count') or 0)
+    source_docs = int(entity.get('source_doc_count') or 0)
+    flags = set(entity.get('quality_flags') or [])
+    penalty = 0
+    if entity.get('is_isolated'):
+        penalty += 20
+    if 'single_chunk_entity' in flags:
+        penalty += 10
+    if entity.get('tool_category') in {'research_modality', 'digital_algorithm', 'generic_method'}:
+        penalty += 4
+    intent_bonus = 0
+    matched = ''.join(entity.get('matched_keywords', [])).lower()
+    entity_type = entity.get('type')
+    if any(token in matched for token in ('干预', 'intervention', 'therapy', 'training', '训练', '治疗')):
+        intent_bonus += 2 if entity_type == 'Intervention' else -2
+    if any(token in matched for token in ('评估', '筛查', '诊断', '量表', '问卷', 'assessment', 'screening', 'diagnostic', 'checklist', 'scale', 'questionnaire')):
+        intent_bonus += 2 if entity_type == 'AssessmentTool' else -1
+    if any(token in matched for token in ('风险', 'risk', '早产', '围产', '围生')):
+        intent_bonus += 1 if entity_type in {'Risk', 'AgeStage'} else -1
+    return (
+        specific,
+        exact,
+        intent_bonus,
+        min(source_docs, 20),
+        min(source_chunks, 100),
+        -penalty,
+        -len(entity.get('name') or ''),
+    )
+
+
 def graph_search(driver, keywords, max_hops=2):
     """Search Neo4j for entities matching keywords, expand subgraph, return related chunk IDs."""
     chunk_ids = set()
-    entities_found = []
+    entities_by_id = {}
+    has_specific_keyword = any(not is_generic_keyword(kw) for kw in keywords)
 
     with driver.session() as session:
         # Fuzzy match entities by name/synonyms
         for kw in keywords:
+            normalized_kw = normalize_key(kw)
+            if not normalized_kw:
+                continue
             result = session.run(
                 'MATCH (e:Entity) '
                 'WHERE toLower(e.name) CONTAINS toLower($kw) '
-                'OR any(syn IN e.synonyms WHERE toLower(syn) CONTAINS toLower($kw)) '
-                'RETURN e.entity_id AS eid, e.name AS name, e.type AS type '
-                'LIMIT 20',
+                'OR any(syn IN coalesce(e.synonyms, []) WHERE toLower(syn) CONTAINS toLower($kw)) '
+                'RETURN e.entity_id AS eid, e.name AS name, e.type AS type, '
+                '       e.source_chunk_count AS source_chunk_count, '
+                '       e.source_doc_count AS source_doc_count, '
+                '       e.quality_flags AS quality_flags, '
+                '       e.is_isolated AS is_isolated, '
+                '       e.tool_category AS tool_category, '
+                '       coalesce(e.synonyms, []) AS synonyms '
+                'LIMIT 80',
                 kw=kw,
             )
             for rec in result:
-                entities_found.append({
-                    'entity_id': rec['eid'],
-                    'name': rec['name'],
-                    'type': rec['type'],
-                })
+                eid = rec['eid']
+                entity = entities_by_id.setdefault(
+                    eid,
+                    {
+                        'entity_id': eid,
+                        'name': rec['name'],
+                        'type': rec['type'],
+                        'source_chunk_count': rec['source_chunk_count'] or 0,
+                        'source_doc_count': rec['source_doc_count'] or 0,
+                        'quality_flags': rec['quality_flags'] or [],
+                        'is_isolated': bool(rec['is_isolated']),
+                        'tool_category': rec['tool_category'] or '',
+                        'matched_keywords': [],
+                        'exact_match': False,
+                    },
+                )
+                entity['matched_keywords'].append(kw)
+                aliases = [rec['name'], *(rec['synonyms'] or [])]
+                if any(normalize_key(alias) == normalized_kw for alias in aliases):
+                    entity['exact_match'] = True
+
+        entities_found = list(entities_by_id.values())
+        if has_specific_keyword:
+            specific_entities = [
+                entity
+                for entity in entities_found
+                if any(not is_generic_keyword(kw) for kw in entity.get('matched_keywords', []))
+            ]
+            if specific_entities:
+                entities_found = specific_entities
+        entities_found.sort(key=entity_match_score, reverse=True)
+        entities_found = entities_found[:60]
 
         if not entities_found:
             return {'entities': [], 'chunk_ids': [], 'relations': []}

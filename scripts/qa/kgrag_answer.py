@@ -56,18 +56,30 @@ def normalize_alias_key(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
-def load_query_aliases(path: Path | None = None) -> dict[str, list[str]]:
-    path = path or ROOT / "config" / "graph" / "curated_entity_alias_map.json"
-    if not path.exists():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    alias_map: dict[str, list[str]] = {}
+def add_alias_payload(alias_map: dict[str, list[str]], payload: dict) -> None:
     for group in payload.get("groups", []):
         terms = [group.get("group_id", ""), *(group.get("aliases") or [])]
         terms = [term for term in terms if term]
         expanded = sorted(set(terms))
         for term in expanded:
-            alias_map[normalize_alias_key(term)] = expanded
+            key = normalize_alias_key(term)
+            existing = alias_map.get(key, [])
+            alias_map[key] = sorted(set([*existing, *expanded]))
+
+
+def load_query_aliases(path: Path | None = None) -> dict[str, list[str]]:
+    paths = [
+        ROOT / "config" / "graph" / "curated_entity_alias_map.json",
+        ROOT / "config" / "qa" / "query_alias_map.json",
+    ]
+    if path is not None:
+        paths = [path]
+    alias_map: dict[str, list[str]] = {}
+    for alias_path in paths:
+        if not alias_path.exists():
+            continue
+        payload = json.loads(alias_path.read_text(encoding="utf-8"))
+        add_alias_payload(alias_map, payload)
     return alias_map
 
 
@@ -119,6 +131,53 @@ def auto_keywords(query: str) -> list[str]:
             continue
         keywords.append(token)
     return sorted(set(keywords)) if keywords else [query]
+
+
+def compact_query_text(parts: list[str], max_chars: int = 220) -> str:
+    text = " ".join(part for part in parts if part)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:max_chars]
+
+
+def build_vector_queries(query: str, keywords: list[str]) -> list[str]:
+    generic = {"asd", "autism", "孤独症", "自闭症", "孤独症谱系障碍", "自闭症谱系障碍"}
+    specific = [
+        keyword
+        for keyword in keywords
+        if keyword and keyword.lower() not in generic
+    ]
+    variants = [query]
+    if specific:
+        variants.append(compact_query_text(specific))
+        variants.append(compact_query_text([query, *specific[:8]]))
+    seen = set()
+    deduped = []
+    for variant in variants:
+        key = normalize_alias_key(variant)
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(variant)
+    return deduped[:3]
+
+
+def vector_search_variants(qdrant_client, embed_model, queries: list[str], collection: str, top_k: int) -> list[dict]:
+    by_chunk_id: dict[str, dict] = {}
+    per_query_k = max(top_k, min(40, top_k * 2))
+    for idx, query in enumerate(queries):
+        for hit in vector_search(qdrant_client, embed_model, query, collection, per_query_k):
+            chunk_id = hit.get("chunk_id")
+            if not chunk_id:
+                continue
+            score = float(hit.get("score") or 0.0)
+            existing = by_chunk_id.get(chunk_id)
+            if existing is None or score > float(existing.get("score") or 0.0):
+                merged = dict(hit)
+                merged["vector_query"] = query
+                merged["vector_query_rank"] = idx
+                by_chunk_id[chunk_id] = merged
+    hits = list(by_chunk_id.values())
+    hits.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
+    return hits[:top_k]
 
 
 def fetch_chunks(driver, chunk_ids: list[str]) -> dict[str, dict]:
@@ -202,6 +261,36 @@ def fetch_relation_evidence_chunks(driver, relation_ids: list[str], limit: int) 
         return [dict(rec) for rec in result]
 
 
+def fetch_entity_evidence_chunks(driver, entity_ids: list[str], limit: int) -> list[dict]:
+    if not entity_ids:
+        return []
+    with driver.session() as session:
+        result = session.run(
+            """
+            UNWIND range(0, size($entity_ids) - 1) AS idx
+            WITH idx, $entity_ids[idx] AS entity_id
+            MATCH (e:Entity {entity_id: entity_id})-[:SUPPORTED_BY]->(ev:Evidence)-[:FROM_CHUNK]->(c:Chunk)
+            RETURN DISTINCT e.entity_id AS entity_id,
+                   e.name AS entity_name,
+                   idx AS entity_rank,
+                   c.chunk_id AS chunk_id,
+                   c.doc_id AS doc_id,
+                   c.title AS title,
+                   c.year AS year,
+                   c.evidence_level AS evidence_level,
+                   c.source_type AS source_type,
+                   c.page_start AS page_start,
+                   c.page_end AS page_end,
+                   c.text AS text
+            ORDER BY entity_rank
+            LIMIT $limit
+            """,
+            entity_ids=entity_ids,
+            limit=limit,
+        )
+        return [dict(rec) for rec in result]
+
+
 def chunk_relevance(row: dict, keywords: list[str]) -> tuple[float, float]:
     haystack = " ".join(
         str(row.get(key) or "")
@@ -215,7 +304,10 @@ def chunk_relevance(row: dict, keywords: list[str]) -> tuple[float, float]:
             score += 3.0 if lowered in generic_keywords else 30.0
     evidence_weight = {"S": 5.0, "A": 3.0, "B": 1.0, "C": 0.0, "D": -1.0}
     score += evidence_weight.get(row.get("evidence_level") or "", 0.0)
-    return score, -float(row.get("relation_rank") or 0)
+    rank = row.get("relation_rank")
+    if rank is None:
+        rank = row.get("entity_rank") or 0
+    return score, -float(rank)
 
 
 def specific_keywords(keywords: list[str]) -> list[str]:
@@ -273,7 +365,14 @@ def retrieve_context(args, *, driver=None, embed_model=None, qdrant_client=None)
         qdrant_client = QdrantClient(url=args.qdrant_url)
     try:
         graph_result = graph_search(driver, keywords)
-        vector_hits = vector_search(qdrant_client, embed_model, args.query, args.collection, args.retrieval_k)
+        vector_queries = build_vector_queries(args.query, keywords)
+        vector_hits = vector_search_variants(
+            qdrant_client,
+            embed_model,
+            vector_queries,
+            args.collection,
+            args.retrieval_k,
+        )
         merged_hits = merge_results(graph_result["chunk_ids"], vector_hits)
 
         specific = specific_keywords(keywords)
@@ -298,8 +397,21 @@ def retrieve_context(args, *, driver=None, embed_model=None, qdrant_client=None)
             specific_graph_evidence = [
                 row for row in graph_evidence_pool if keyword_matches_chunk(row, specific)
             ]
-            if specific_graph_evidence:
-                graph_evidence_pool = specific_graph_evidence
+            graph_evidence_pool = specific_graph_evidence
+        if len(graph_evidence_pool) < args.graph_evidence_k and specific_entities:
+            entity_evidence = fetch_entity_evidence_chunks(
+                driver,
+                [entity["entity_id"] for entity in specific_entities],
+                args.graph_evidence_pool_k,
+            )
+            if specific:
+                entity_evidence = [
+                    row for row in entity_evidence if keyword_matches_chunk(row, specific)
+                ]
+            seen_evidence_chunks = {row.get("chunk_id") for row in graph_evidence_pool}
+            graph_evidence_pool.extend(
+                row for row in entity_evidence if row.get("chunk_id") not in seen_evidence_chunks
+            )
         graph_evidence_pool.sort(key=lambda row: chunk_relevance(row, keywords), reverse=True)
         graph_evidence = graph_evidence_pool[: args.graph_evidence_k]
 
@@ -367,6 +479,7 @@ def retrieve_context(args, *, driver=None, embed_model=None, qdrant_client=None)
     return {
         "query": args.query,
         "keywords": keywords,
+        "vector_queries": vector_queries,
         "graph": graph_result,
         "contexts": contexts,
         "relations": relations,
@@ -382,24 +495,74 @@ def evidence_policy(relations: list[dict]) -> dict:
     }
 
 
+def keyword_hit_spans(text: str, keywords: list[str]) -> list[tuple[int, int, str]]:
+    lowered = text.lower()
+    spans = []
+    seen_keywords = set()
+    for keyword in keywords:
+        needle = (keyword or "").strip().lower()
+        if not needle or needle in seen_keywords:
+            continue
+        seen_keywords.add(needle)
+        start = 0
+        while True:
+            pos = lowered.find(needle, start)
+            if pos < 0:
+                break
+            spans.append((pos, pos + len(needle), needle))
+            start = pos + max(1, len(needle))
+    spans.sort(key=lambda item: (item[0], item[1]))
+    return spans
+
+
+def best_keyword_window(text_len: int, max_chars: int, spans: list[tuple[int, int, str]]) -> tuple[int, int]:
+    if text_len <= max_chars:
+        return 0, text_len
+    if not spans:
+        return 0, min(text_len, max_chars)
+
+    candidates = {0, max(0, text_len - max_chars)}
+    for start, end, _keyword in spans:
+        candidates.add(max(0, min(start - max_chars // 3, text_len - max_chars)))
+        candidates.add(max(0, min(end - (max_chars * 2 // 3), text_len - max_chars)))
+
+    best_start = 0
+    best_score = (-1, -1, -1, 0)
+    for candidate in candidates:
+        window_end = min(text_len, candidate + max_chars)
+        window_hits = [
+            (start, end, keyword)
+            for start, end, keyword in spans
+            if start < window_end and end > candidate
+        ]
+        if not window_hits:
+            continue
+        unique_keywords = {keyword for _start, _end, keyword in window_hits}
+        covered_chars = sum(
+            max(0, min(end, window_end) - max(start, candidate))
+            for start, end, _keyword in window_hits
+        )
+        first_hit = min(start for start, _end, _keyword in window_hits)
+        score = (len(unique_keywords), len(window_hits), covered_chars, -first_hit)
+        if score > best_score:
+            best_score = score
+            best_start = candidate
+    return best_start, min(text_len, best_start + max_chars)
+
+
 def trim_text(text: str, max_chars: int, keywords: list[str] | None = None) -> str:
     text = re.sub(r"\s+", " ", text or "").strip()
     keywords = keywords or []
-    lowered = text.lower()
-    hit_positions = [
-        lowered.find(keyword.lower())
-        for keyword in keywords
-        if keyword and lowered.find(keyword.lower()) >= 0
-    ]
-    if hit_positions and len(text) > max_chars:
-        center = min(hit_positions)
-        start = max(0, center - max_chars // 3)
-        end = min(len(text), start + max_chars)
+    if max_chars <= 0:
+        return ""
+    if len(text) > max_chars:
+        spans = keyword_hit_spans(text, keywords)
+        start, end = best_keyword_window(len(text), max_chars, spans)
         snippet = text[start:end]
         prefix = "..." if start > 0 else ""
         suffix = "..." if end < len(text) else ""
         return f"{prefix}{snippet}{suffix}"
-    return text[:max_chars] + ("..." if len(text) > max_chars else "")
+    return text
 
 
 def build_prompt(context: dict, max_chars_per_chunk: int) -> list[dict]:
@@ -562,6 +725,7 @@ def summarize_context(context: dict) -> dict:
     return {
         "query": context["query"],
         "keywords": context["keywords"],
+        "vector_queries": context.get("vector_queries", []),
         "graph_counts": {
             "entities": len(context["graph"]["entities"]),
             "relations": len(context["graph"]["relations"]),
@@ -579,6 +743,7 @@ def summarize_context(context: dict) -> dict:
                 "source_type": item.get("source_type"),
                 "page_start": item.get("page_start"),
                 "page_end": item.get("page_end"),
+                "vector_query": item.get("vector_query"),
             }
             for item in context["contexts"]
         ],

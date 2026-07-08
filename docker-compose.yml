@@ -41,3 +41,9 @@ volumes:
   neo4j_data:
   neo4j_logs:
   qdrant_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 192.168.112.0/24

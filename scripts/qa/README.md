@@ -17,7 +17,7 @@ CLI：
 .venv/bin/python scripts/qa/kgrag_answer.py "ADOS 是什么? 它在 ASD 评估中有什么作用?"
 ```
 
-HTTP API：
+HTTP API（FastAPI / uvicorn）：
 
 ```bash
 .venv/bin/python scripts/qa/kgrag_api.py --host 127.0.0.1 --port 8010
@@ -91,6 +91,35 @@ scripts/qa/eval_questions.jsonl
   --graph-evidence-k 2
 ```
 
+真实生成遇到外部 LLM 瞬时网络错误时可加单题重试：
+
+```bash
+.venv/bin/python scripts/qa/evaluate_qa.py \
+  --ids safety_direct_treatment safety_medication_advice \
+  --context-k 6 \
+  --graph-evidence-k 4 \
+  --retries 1 \
+  --retry-delay 3
+```
+
+端到端 smoke：
+
+```bash
+scripts/qa/e2e_check.sh
+```
+
+快速 smoke：
+
+```bash
+scripts/qa/e2e_check.sh --quick
+```
+
+包含安全/边界真实生成 smoke：
+
+```bash
+scripts/qa/e2e_check.sh --with-real
+```
+
 评估输出写入 `data/qa_eval/<timestamp>_<mode>/`：
 
 - `summary.json`：通过率和聚合指标
@@ -98,25 +127,28 @@ scripts/qa/eval_questions.jsonl
 
 ## 当前评估基线
 
-- dry-run：10/10 通过
-- 真实生成小样本：4/4 通过
-- 检查项：上下文数量、图关系召回、期望实体词命中、回答引用、文献引用、图关系引用、临床护栏
+- dry-run：50/50 通过
+- 安全/边界真实生成小样本：8/8 通过
+- 评估工具版本边界真实生成小样本：5/5 通过
+- 中文自然问法真实生成小样本：5/5 通过
+- 检查项：上下文数量、图关系召回、期望实体词命中、回答引用、文献引用、图关系引用、临床护栏、研究边界、临床过度表述规避
 
 ## 当前流程
 
 1. 自动从问题抽取关键词，过滤“是什么/有什么作用”等泛问题词。
-2. 使用 curated alias map 扩展高价值查询词，例如 `ABA` 会扩展到“应用行为分析”等别名。
+2. 使用 alias map 扩展高价值查询词：`config/graph/curated_entity_alias_map.json` 只放可安全归并的实体别名，`config/qa/query_alias_map.json` 放仅用于检索扩展的版本/问卷别名。
 3. Neo4j 匹配实体并扩展关系。
-4. 优先围绕具体实体词扩展关系，例如 ADOS 优先于 ASD/孤独症这类泛词。
-5. 从关系 `SUPPORTED_BY` 证据中取 graph-evidence chunks。
-6. 同时执行 Qdrant 向量检索，并合并 graph+vector 命中。
-7. 构造带引用编号 `[C1]` 的证据上下文和 `[G1]` 的图谱关系上下文。
-8. 使用 `qa_usage` / `tool_category` 语义要求模型保留证据边界和临床护栏。
+4. 对图谱实体做检索层降噪：去重，优先具体关键词、精确匹配、多文档实体，并按查询意图加权实体类型；例如 ADOS 优先于 ASD/孤独症这类泛词。
+5. 从关系 `SUPPORTED_BY` 证据和具体实体直接证据中取 graph-evidence chunks。
+6. 构造原始问题、关键词聚合、问题+关键词增强三类向量查询，合并 Qdrant 命中。
+7. 合并 graph+vector 命中。
+8. 构造带引用编号 `[C1]` 的证据上下文和 `[G1]` 的图谱关系上下文。
+9. 对长 chunk 按关键词命中最密集区间截取，尽量保留模型实际需要的证据段。
+10. 使用 `qa_usage` / `tool_category` 语义要求模型保留证据边界和临床护栏。
 
 ## 当前限制
 
-- API 当前使用 Python 标准库 HTTP server，暂未引入 FastAPI/uvicorn。
-- 批量评估当前每题会重新初始化 embedding 模型，速度偏慢；后续可将模型和 Qdrant client 提升为批处理级缓存。
 - 关系置信度来自抽取和归一化结果，不等价于医学证据强度。
 - ADOS / ADI-R / M-CHAT-R/F 等评估工具仍保留版本边界，暂不强行合并。
 - 对干预、诊断、用药、风险类问题，回答必须保留“不能替代专业评估或临床决策”的限制。
+- 更大 embedding 模型（如 bge-large-zh）尚未评估；当前策略是不重建 Qdrant 的轻量 query rewrite。

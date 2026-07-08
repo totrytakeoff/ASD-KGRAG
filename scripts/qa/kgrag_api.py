@@ -184,6 +184,7 @@ class EvalQuestionModel(BaseModel):
     keywords: list[str] = []
     expect_graph_terms: list[str] = []
     requires_guardrail: bool = False
+    requires_research_boundary: bool = False
 
 
 # ---------------------------------------------------------------------------

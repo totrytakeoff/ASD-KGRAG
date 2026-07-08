@@ -33,6 +33,72 @@
         "应用行为分析训练",
         "应用行为分析疗法"
       ]
+    },
+    {
+      "type": "AssessmentTool",
+      "group_id": "adi-r",
+      "aliases": [
+        "adi r",
+        "autism diagnostic interview-revised",
+        "autism diagnostic interview revised",
+        "孤独症诊断访谈修订版"
+      ]
+    },
+    {
+      "type": "Intervention",
+      "group_id": "early intensive behavioral intervention",
+      "aliases": [
+        "eibi",
+        "early intensive behavioral intervention (eibi)",
+        "早期密集行为干预",
+        "早期密集型行为和认知干预"
+      ]
+    },
+    {
+      "type": "Intervention",
+      "group_id": "parent training",
+      "aliases": [
+        "家长培训",
+        "家长培训班",
+        "家长介入",
+        "父母介入",
+        "父母的介入干预",
+        "亲子互动"
+      ]
+    },
+    {
+      "type": "Risk",
+      "group_id": "preterm birth",
+      "aliases": [
+        "早产",
+        "早产史",
+        "早产儿",
+        "围产期",
+        "围生期",
+        "perinatal"
+      ]
+    },
+    {
+      "type": "Intervention",
+      "group_id": "medication",
+      "aliases": [
+        "用药",
+        "药物",
+        "药物治疗",
+        "药物干预",
+        "精神科药物",
+        "抗精神药物"
+      ]
+    },
+    {
+      "type": "Intervention",
+      "group_id": "hyperbaric oxygen therapy",
+      "aliases": [
+        "高压氧",
+        "高压氧治疗",
+        "hyperbaric oxygen treatment",
+        "hyperbaric oxygen"
+      ]
     }
   ],
   "_candidates": []
