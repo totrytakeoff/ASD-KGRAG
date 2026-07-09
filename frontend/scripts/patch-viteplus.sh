@@ -6,7 +6,9 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)/node_modules/vite-plus/dist"
 
-sed -i 's|from "vite-plus"|from "vitest/config"|g' "$DIR/index.js"
-sed -i 's|from "vite-plus"|from "vitest/config"|g' "$DIR/define-config-DJUehepE.js"
+if [[ -d "$DIR" ]]; then
+  find "$DIR" -maxdepth 1 -type f \( -name '*.js' -o -name '*.cjs' \) \
+    -exec sed -i 's|from "vite-plus"|from "vitest/config"|g' {} +
+fi
 
 echo "vite-plus ESM self-import patched."

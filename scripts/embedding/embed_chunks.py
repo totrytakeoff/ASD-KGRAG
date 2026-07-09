@@ -70,7 +70,10 @@ def main() -> int:
     print(f"loading model {args.model}...")
     t0 = time.time()
     model = SentenceTransformer(args.model)
-    dim = model.get_embedding_dimension()
+    if hasattr(model, "get_embedding_dimension"):
+        dim = model.get_embedding_dimension()
+    else:
+        dim = model.get_sentence_embedding_dimension()
     print(f"model loaded in {time.time()-t0:.1f}s, dim={dim}")
 
     # Connect to Qdrant
