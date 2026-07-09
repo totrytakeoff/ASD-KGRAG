@@ -1,6 +1,6 @@
 # ASD-KGRAG 现状与后续发展
 
-更新时间: 2026-07-08
+更新时间: 2026-07-09
 
 ---
 
@@ -19,7 +19,7 @@
 
 ### Phase 1 — 前端 Dashboard (基础)
 
-- [x] React 18 + Vite+ + Tailwind CSS + ECharts SPA
+- [x] React 18 + Vite + Tailwind CSS + ECharts SPA
 - [x] 聊天问答界面 (含图谱证据路径/文献引用展示)
 - [x] 知识图谱概览 (实体/关系/Chunk 统计 + 类型分布图表)
 - [x] 实体浏览 (分页/搜索/类型过滤)
@@ -80,14 +80,28 @@
 - [x] **A4 独立拒答决策器** — 已新增 `agent_policy.py`，将 evidence flags + route 合成为 answer_policy，输出 answer_mode、guardrail/research boundary 要求、clinical certainty 限制和 forbidden_claims；当前仍采用可解释规则，不引入 LLM 分类器。
 - [x] **A5 对比评测框架** — 已新增 `evaluate_compare.py` 第一版，dry-run 对比 baseline KGRAG 与 agent KGRAG，输出逐题 baseline/agent/delta、route、answer_mode、followup_triggered、关系数变化和耗时变化；纯 LLM / graph-only / vector-only 留作后续扩展。
 - [ ] **A6 MCP 服务化** — QA 能力暴露为 MCP server
-- [ ] **A7 FastAPI + 容器化** — 已完成 (FastAPI 迁移完毕)
+- [x] **A7 FastAPI + 容器化** — FastAPI 迁移、lifespan 连接复用、Docker Compose Neo4j/Qdrant 编排均已完成。
+
+### R1 检索质量与数据组织优化 — 下一阶段主线
+
+- [ ] **R1-1 检索诊断工具** — 为单 query 输出 auto keywords、expanded aliases、matched entities、filtered entities、relations、graph evidence chunks、vector hits、final contexts，优先服务问题定位，而不是继续比较 agent 是否“提升”。
+- [ ] **R1-2 自然问法评估集** — 新增无人工 keywords 的自然 query set，覆盖家长问法、教师问法、临床边界问法，用于衡量真实召回能力。
+- [ ] **R1-3 route-aware relation rerank** — assessment / intervention / risk / safety 使用不同关系优先级和降噪策略，降低泛实体、弱关系、低质量实体干扰。
+- [ ] **R1-4 数据治理候选清单** — 输出高频低质实体、单 chunk 实体、跨类型 alias 冲突、research_context_only 高风险关系，供人工审核。
+- [ ] **R1-5 compare 扩展** — `evaluate_compare.py` 增加 `--ignore-question-keywords`，并逐步扩展 graph-only / vector-only / pure-llm baseline。
+
+### R2 可观测性与产品化
+
+- [ ] **R2-1 Dashboard 展示 agent trace summary** — 在问答或评估详情中展示 route、answer_mode、followup、forbidden_claims 和关键 trace 步骤。
+- [ ] **R2-2 Dashboard 接入 compare run** — 展示 baseline vs agent 的 delta、route 分布、followup 触发率和退化案例。
+- [ ] **R2-3 前端问答 agent_mode 开关** — 给本地调试和演示提供可切换入口，默认仍可保持 baseline KGRAG。
 
 ---
 
 ## 三、当前架构
 
 ```
-前端 (React 18 + Vite+ + Tailwind)
+前端 (React 18 + Vite + Tailwind)
   ├── 聊天问答 (ChatApp)
   └── Dashboard SPA
        ├── 概览          ← Neo4j 统计
@@ -124,12 +138,22 @@
   └── config/graph/curated_entity_alias_map.json ← 别名映射
 ```
 
-## 四、推进顺序建议
+## 四、当前推进顺序建议
 
 ```
-P0-1 + P0-2  → 先有评估尺子（2-3 天）
-P1-1 + P1-2  → 链路可信度（1-2 天）
-P2-1 + P2-2 + P2-3 → 召回与截断质量（3-5 天）
-P3-1  → 可演示/可交接（1 天）
-之后再启动 Agent 化
+已完成基础闭环:
+P0/P1/P2/P3 + A1/A2/A3/A4/A5
+
+下一阶段:
+R1-1 检索诊断工具
+  → R1-2 自然问法评估集
+  → R1-5 compare --ignore-question-keywords
+  → R1-3 route-aware relation rerank
+  → R1-4 数据治理候选清单
+
+随后:
+R2-1/R2-2 Dashboard 可观测性
+  → A6 MCP 服务化
 ```
+
+当前判断：Agent 化已经达到“统一入口、调度、策略、trace、对比评测”的阶段，后续不应继续围绕 agent 本身是否显著提升打转。质量主线应转向数据质量、图谱结构、检索组织、rerank 和证据组织。

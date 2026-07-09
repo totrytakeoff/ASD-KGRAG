@@ -2,6 +2,8 @@
 
 本文档说明如何在本地启动 ASD-KGRAG，并验证 Neo4j、Qdrant、KGRAG QA 链路。
 
+如果是给项目组成员做内部测试，先看轻量说明：`docs/ops/internal_testing.md`。
+
 ## 1. 前置条件
 
 需要：
@@ -143,6 +145,14 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
   -d '{"query":"ADOS 是什么? 它在 ASD 评估中有什么作用?","dry_run":true,"context_k":4,"graph_evidence_k":2}'
 ```
 
+受控 Agent 调度 dry-run：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8010/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"孩子语言少、不太看人，是不是就能判断为自闭症?","dry_run":true,"agent_mode":true,"include_trace":true}'
+```
+
 真实生成请求：
 
 ```bash
@@ -157,6 +167,12 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
 
 ```bash
 .venv/bin/python scripts/qa/evaluate_qa.py --dry-run --context-k 6 --graph-evidence-k 4
+```
+
+baseline KGRAG 与 agent KGRAG 对比：
+
+```bash
+.venv/bin/python scripts/qa/evaluate_compare.py --limit 5
 ```
 
 小样本真实生成：

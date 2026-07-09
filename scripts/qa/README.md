@@ -70,7 +70,7 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
 
 ## Agent 工具化入口
 
-第一步 agent 化采用受控工具工作流，不替代现有 `/ask` 和 `kgrag_answer.py`。它将查询意图、query expansion、检索、证据检查、必要时最多一次补检索、回答草稿和答案校验拆为可 trace 的步骤：
+Agent 化采用受控工具工作流，不替代现有 `kgrag_answer.py`。它将查询意图、query expansion、检索、证据检查、必要时最多一次补检索、回答草稿和答案校验拆为可 trace 的步骤：
 
 ```bash
 .venv/bin/python scripts/qa/agent_runner.py \
@@ -97,6 +97,16 @@ Agent 路由和安全策略已独立为规则模块：
 
 当前策略保持可解释、可回归，不使用 LLM 分类器。
 
+API 中可通过 `agent_mode` 启用同一套受控调度：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8010/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"孩子语言少、不太看人，是不是就能判断为自闭症?","dry_run":true,"agent_mode":true,"include_trace":true}'
+```
+
+当前定位：Agent 是统一入口、调度策略、前后处理和可观测执行框架；回答质量的主要影响因素仍然是数据质量、图谱结构、检索组织、rerank 和证据组织。
+
 ## 批量评估
 
 评估题集：
@@ -118,6 +128,8 @@ scripts/qa/eval_questions.jsonl
 ```
 
 对比输出写入 `data/qa_compare/<timestamp>_dry_run_compare/`，包含逐题 `baseline`、`agent`、`delta` 和聚合 summary。
+
+当前 50 题标准评估集大多包含人工关键词，baseline KGRAG 已经能稳定命中图谱证据，因此 baseline vs agent compare 可能大量显示 `tie`。这不是 agent 失败，而是说明当前评估集不适合单独衡量 agent 在自然无关键词问法下的收益。后续应扩展自然问法集和 `--ignore-question-keywords` 对比模式。
 
 小样本真实生成：
 
@@ -189,3 +201,4 @@ scripts/qa/e2e_check.sh --with-real
 - ADOS / ADI-R / M-CHAT-R/F 等评估工具仍保留版本边界，暂不强行合并。
 - 对干预、诊断、用药、风险类问题，回答必须保留“不能替代专业评估或临床决策”的限制。
 - 更大 embedding 模型（如 bge-large-zh）尚未评估；当前策略是不重建 Qdrant 的轻量 query rewrite。
+- Agent 调度层已经可用，但后续质量提升应优先投入检索诊断、自然问法评估集、route-aware rerank 和数据治理。
