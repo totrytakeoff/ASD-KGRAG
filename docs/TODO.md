@@ -78,7 +78,7 @@
 - [x] **A2 多步迭代检索** — 已加入受控补检索：首轮检索后按意图和证据 flags 判断是否需要补检索，最多执行 1 次固定计划 follow-up retrieval，并合并上下文/图谱关系后再生成与校验；诊断边界自然问法可从纯向量证据补到图谱关系证据。
 - [x] **A3 查询路由** — 已新增 `agent_router.py`，将查询分流为 assessment_info / intervention_advice / diagnostic_boundary / safety_boundary / risk_info / knowledge_qa，并输出 retrieval_focus、guardrail 和补检索建议。
 - [x] **A4 独立拒答决策器** — 已新增 `agent_policy.py`，将 evidence flags + route 合成为 answer_policy，输出 answer_mode、guardrail/research boundary 要求、clinical certainty 限制和 forbidden_claims；当前仍采用可解释规则，不引入 LLM 分类器。
-- [ ] **A5 对比评测框架** — 纯 LLM vs 纯 RAG vs KGRAG
+- [x] **A5 对比评测框架** — 已新增 `evaluate_compare.py` 第一版，dry-run 对比 baseline KGRAG 与 agent KGRAG，输出逐题 baseline/agent/delta、route、answer_mode、followup_triggered、关系数变化和耗时变化；纯 LLM / graph-only / vector-only 留作后续扩展。
 - [ ] **A6 MCP 服务化** — QA 能力暴露为 MCP server
 - [ ] **A7 FastAPI + 容器化** — 已完成 (FastAPI 迁移完毕)
 

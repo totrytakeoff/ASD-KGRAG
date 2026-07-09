@@ -111,6 +111,14 @@ scripts/qa/eval_questions.jsonl
 .venv/bin/python scripts/qa/evaluate_qa.py --dry-run --context-k 6 --graph-evidence-k 4
 ```
 
+对比 baseline KGRAG 与 agent KGRAG 的 dry-run 检索/策略表现：
+
+```bash
+.venv/bin/python scripts/qa/evaluate_compare.py --limit 5
+```
+
+对比输出写入 `data/qa_compare/<timestamp>_dry_run_compare/`，包含逐题 `baseline`、`agent`、`delta` 和聚合 summary。
+
 小样本真实生成：
 
 ```bash

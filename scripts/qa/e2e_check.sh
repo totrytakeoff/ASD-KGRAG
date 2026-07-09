@@ -98,6 +98,7 @@ log "Static checks"
   scripts/qa/agent_trace.py \
   scripts/qa/kgrag_answer.py \
   scripts/qa/evaluate_qa.py \
+  scripts/qa/evaluate_compare.py \
   scripts/qa/kgrag_api.py
 python -m json.tool config/graph/curated_entity_alias_map.json >/tmp/asd_kgrag_alias_check.json
 "$PYTHON" - <<'PY'
@@ -277,6 +278,33 @@ missing = [name for name in required if name not in steps]
 if missing:
     raise SystemExit(f"agent trace missing steps: {missing}")
 print(f"agent trace: {len(steps)} steps")
+PY
+
+log "Checking compare dry-run"
+compare_dir="/tmp/asd_kgrag_compare"
+rm -rf "$compare_dir"
+"$PYTHON" scripts/qa/evaluate_compare.py \
+  --ids query_quality_nonverbal_diagnosis \
+  --output-dir "$compare_dir" \
+  >/tmp/asd_kgrag_compare.txt
+"$PYTHON" - <<'PY'
+import json
+from pathlib import Path
+
+base = Path("/tmp/asd_kgrag_compare")
+summary_files = sorted(base.glob("*_dry_run_compare/summary.json"))
+if not summary_files:
+    raise SystemExit("compare dry-run did not write summary.json")
+summary = json.loads(summary_files[-1].read_text(encoding="utf-8"))
+if summary.get("total") != 1:
+    raise SystemExit(f"compare dry-run total mismatch: {summary}")
+if (summary.get("route_counts") or {}).get("diagnostic_boundary") != 1:
+    raise SystemExit(f"compare dry-run route mismatch: {summary}")
+print(
+    "compare: "
+    f"route_counts={summary.get('route_counts')}, "
+    f"classifications={summary.get('classification_counts')}"
+)
 PY
 
 log "Running batch dry-run evaluation"
