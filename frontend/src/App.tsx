@@ -141,10 +141,19 @@ async function askBackend(query: string): Promise<AiMessage | null> {
       relation: r.relation,
       support_count: r.support_count,
       confidence: r.confidence,
+      source_type: r.source_type,
+      target_type: r.target_type,
     }));
-    const nodes = Array.from(new Set(relations.flatMap((r: any) => [r.source, r.target]))).map(
-      (id: any) => ({ id, name: id, type: "Entity" }),
-    );
+    const nodeTypes = new Map<string, string>();
+    relations.forEach((r: any) => {
+      if (r.source) nodeTypes.set(r.source, r.source_type || nodeTypes.get(r.source) || "Entity");
+      if (r.target) nodeTypes.set(r.target, r.target_type || nodeTypes.get(r.target) || "Entity");
+    });
+    const nodes = Array.from(nodeTypes.entries()).map(([id, type]) => ({
+      id,
+      name: id,
+      type,
+    }));
     const citations = (ctx.contexts || []).map((c: any, i: number) => ({
       citation_id: c.citation_id || `C${i + 1}`,
       title: c.title,
@@ -430,7 +439,7 @@ function AiBubble({ msg }: { msg: AiMessage }) {
                     ))}
                   </ul>
                   {msg.nodes && msg.nodes.length > 0 && (
-                    <div className="rounded-lg border border-gray-100 bg-white p-2">
+                    <div className="rounded-lg border border-gray-200 bg-white p-2">
                       <GraphView nodes={msg.nodes!} edges={msg.relations!} />
                     </div>
                   )}
