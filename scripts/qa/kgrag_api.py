@@ -30,6 +30,8 @@ from kgrag_answer import (  # noqa: E402
     default_namespace,
     load_dotenv,
 )
+from agent_tools import run_toolized_agent  # noqa: E402
+from agent_trace import AgentTrace  # noqa: E402
 
 logger = logging.getLogger("kgrag-api")
 
@@ -94,6 +96,8 @@ class AskRequest(BaseModel):
     query: str
     keywords: list[str] = []
     dry_run: bool = False
+    agent_mode: bool = False
+    include_trace: bool = False
     retrieval_k: int = Field(default=20, ge=1, le=100)
     context_k: int = Field(default=6, ge=1, le=30)
     relation_k: int = Field(default=30, ge=1, le=100)
@@ -263,14 +267,26 @@ async def ask(body: AskRequest, request: Request):
 
     apply_active_model_to_ns(ns)
     try:
-        result = answer_query(
-            ns,
-            driver=request.app.state.neo4j_driver,
-            embed_model=request.app.state.embed_model,
-            qdrant_client=request.app.state.qdrant_client,
-        )
+        if body.agent_mode:
+            trace = AgentTrace(query=body.query)
+            result = run_toolized_agent(
+                ns,
+                driver=request.app.state.neo4j_driver,
+                embed_model=request.app.state.embed_model,
+                qdrant_client=request.app.state.qdrant_client,
+                trace=trace,
+            )
+            if body.include_trace:
+                result["agent_trace"] = trace.to_dict()
+        else:
+            result = answer_query(
+                ns,
+                driver=request.app.state.neo4j_driver,
+                embed_model=request.app.state.embed_model,
+                qdrant_client=request.app.state.qdrant_client,
+            )
     except Exception as exc:
-        logger.exception("answer_query failed")
+        logger.exception("qa request failed")
         return JSONResponse(
             status_code=500,
             content={"error": "qa_failed", "detail": str(exc)},

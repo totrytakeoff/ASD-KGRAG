@@ -8,6 +8,8 @@ PYTHON="${PYTHON:-.venv/bin/python}"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8010}"
 API_URL="http://${API_HOST}:${API_PORT}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 QUICK=0
 WITH_REAL=0
 SKIP_API=0
@@ -122,6 +124,34 @@ for _ in {1..60}; do
 done
 curl -fsS "http://127.0.0.1:6333/collections" >/tmp/asd_kgrag_qdrant_collections.json
 
+log "Waiting for Neo4j"
+for _ in {1..90}; do
+  if "$PYTHON" - <<'PY' >/tmp/asd_kgrag_neo4j_wait.txt 2>/dev/null
+from neo4j import GraphDatabase
+
+driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "asd-kgrag-local"))
+try:
+    with driver.session() as session:
+        session.run("RETURN 1 AS ok").single()["ok"]
+finally:
+    driver.close()
+PY
+  then
+    break
+  fi
+  sleep 1
+done
+"$PYTHON" - <<'PY'
+from neo4j import GraphDatabase
+
+driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "asd-kgrag-local"))
+try:
+    with driver.session() as session:
+        session.run("RETURN 1 AS ok").single()["ok"]
+finally:
+    driver.close()
+PY
+
 log "Checking Neo4j and Qdrant data"
 "$PYTHON" - <<'PY'
 from neo4j import GraphDatabase
@@ -185,6 +215,32 @@ if not contexts:
 if not relations:
     raise SystemExit("/ask dry_run returned no graph relations")
 print(f"api ask: contexts={len(contexts)}, relations={len(relations)}")
+PY
+
+  log "Checking FastAPI /ask agent_mode dry_run"
+  curl -fsS -X POST "${API_URL}/ask" \
+    -H 'Content-Type: application/json' \
+    -d '{"query":"孩子语言少、不太看人，是不是就能判断为自闭症?","dry_run":true,"agent_mode":true,"include_trace":true,"context_k":6,"graph_evidence_k":4}' \
+    >/tmp/asd_kgrag_api_agent_ask.json
+  "$PYTHON" - <<'PY'
+import json
+payload = json.loads(open("/tmp/asd_kgrag_api_agent_ask.json", encoding="utf-8").read())
+agent = payload.get("agent") or {}
+route = (agent.get("intent") or {}).get("route") or (agent.get("intent") or {}).get("intent")
+policy = ((agent.get("evidence") or {}).get("answer_policy") or {})
+ctx = payload.get("context") or {}
+relations = ctx.get("relations") or []
+trace = payload.get("agent_trace") or {}
+steps = [step.get("name") for step in trace.get("steps") or []]
+if route != "diagnostic_boundary":
+    raise SystemExit(f"agent_mode route mismatch: {route}")
+if policy.get("answer_mode") != "guardrailed_answer":
+    raise SystemExit(f"agent_mode answer policy mismatch: {policy}")
+if not relations:
+    raise SystemExit("agent_mode dry_run returned no graph relations")
+if "merge_followup_evidence" not in steps:
+    raise SystemExit(f"agent_mode trace missing merge_followup_evidence: {steps}")
+print(f"api agent ask: route={route}, relations={len(relations)}, trace_steps={len(steps)}")
 PY
 fi
 
