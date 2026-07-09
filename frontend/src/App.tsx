@@ -3,6 +3,8 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
+  Check,
+  Edit3,
   Eraser,
   Loader2,
   MessageSquarePlus,
@@ -12,12 +14,12 @@ import {
   ShieldAlert,
   Stethoscope,
   Trash2,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import GraphView from "./GraphView";
-import { mockConversations } from "./mockData";
 import type { AiMessage, Conversation, Message } from "./types";
 import Login from "./dashboard/Login";
 import DashboardLayout from "./dashboard/DashboardLayout";
@@ -36,6 +38,86 @@ import { isAuthenticated, verifyAuth } from "./dashboard/api";
 const nowISO = () => new Date().toISOString();
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+const DEFAULT_CONVERSATION_TITLE = "新对话";
+const CHAT_CONVERSATIONS_STORAGE_KEY = "kgrag_chat_conversations_v1";
+const CHAT_ACTIVE_STORAGE_KEY = "kgrag_chat_active_id_v1";
+
+function createConversation(title = DEFAULT_CONVERSATION_TITLE): Conversation {
+  return {
+    id: uid(),
+    title,
+    messages: [],
+    updated_at: nowISO(),
+  };
+}
+
+function isDefaultTitle(title: string) {
+  return !title.trim() || title.trim() === DEFAULT_CONVERSATION_TITLE;
+}
+
+function generateConversationTitle(query: string) {
+  const normalized = query
+    .replace(/\s+/g, " ")
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "")
+    .replace(/[?？!！。.,，;；:：]+$/g, "");
+  if (!normalized) return DEFAULT_CONVERSATION_TITLE;
+
+  const withoutLeadIn = normalized.replace(
+    /^(请问|请介绍一下|介绍一下|帮我分析一下|帮我看看|我想知道|想了解一下|能否说明|能不能说明|什么是|什么叫)/,
+    "",
+  );
+  const title = withoutLeadIn || normalized;
+  return title.length > 18 ? `${title.slice(0, 18)}...` : title;
+}
+
+function normalizeConversation(raw: any): Conversation | null {
+  if (!raw || typeof raw !== "object" || typeof raw.id !== "string") return null;
+  const messages = Array.isArray(raw.messages)
+    ? raw.messages.filter(
+        (m: any) =>
+          m &&
+          (m.role === "user" || m.role === "ai") &&
+          typeof m.content === "string",
+      )
+    : [];
+  return {
+    id: raw.id,
+    title:
+      typeof raw.title === "string" && raw.title.trim()
+        ? raw.title.trim()
+        : DEFAULT_CONVERSATION_TITLE,
+    messages,
+    updated_at: typeof raw.updated_at === "string" ? raw.updated_at : nowISO(),
+  };
+}
+
+function loadChatState() {
+  if (typeof window === "undefined") {
+    const fresh = createConversation();
+    return { conversations: [fresh], activeId: fresh.id };
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(CHAT_CONVERSATIONS_STORAGE_KEY) || "[]");
+    const conversations = Array.isArray(stored)
+      ? stored.map(normalizeConversation).filter((c): c is Conversation => Boolean(c))
+      : [];
+    if (conversations.length > 0) {
+      const storedActiveId = localStorage.getItem(CHAT_ACTIVE_STORAGE_KEY);
+      const activeId = conversations.some((c) => c.id === storedActiveId)
+        ? storedActiveId!
+        : conversations[0].id;
+      return { conversations, activeId };
+    }
+  } catch {
+    localStorage.removeItem(CHAT_CONVERSATIONS_STORAGE_KEY);
+    localStorage.removeItem(CHAT_ACTIVE_STORAGE_KEY);
+  }
+
+  const fresh = createConversation();
+  return { conversations: [fresh], activeId: fresh.id };
+}
 
 async function askBackend(query: string): Promise<AiMessage | null> {
   try {
@@ -90,13 +172,35 @@ function Sidebar({
   onSelect,
   onNew,
   onDelete,
+  onRename,
 }: {
   conversations: Conversation[];
   activeId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  const startRename = (conversation: Conversation) => {
+    setEditingId(conversation.id);
+    setEditingTitle(conversation.title);
+  };
+
+  const finishRename = () => {
+    if (!editingId) return;
+    onRename(editingId, editingTitle);
+    setEditingId(null);
+    setEditingTitle("");
+  };
+
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditingTitle("");
+  };
+
   return (
     <aside className="flex h-full w-72 flex-col border-r border-gray-200 bg-white">
       <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-4">
@@ -138,7 +242,62 @@ function Sidebar({
                   size={14}
                   className={c.id === activeId ? "text-medical-600" : "text-gray-400"}
                 />
-                <span className="flex-1 truncate">{c.title}</span>
+                {editingId === c.id ? (
+                  <input
+                    value={editingTitle}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        finishRename();
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    autoFocus
+                    className="min-w-0 flex-1 rounded border border-medical-200 bg-white px-2 py-1 text-sm text-gray-800 outline-none focus:border-medical-500"
+                  />
+                ) : (
+                  <span className="flex-1 truncate">{c.title}</span>
+                )}
+                {editingId === c.id ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        finishRename();
+                      }}
+                      className="text-gray-400 transition hover:text-medical-600"
+                      title="保存名称"
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cancelRename();
+                      }}
+                      className="text-gray-400 transition hover:text-gray-600"
+                      title="取消重命名"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(c);
+                    }}
+                    className="text-gray-300 opacity-0 transition hover:text-medical-600 group-hover:opacity-100"
+                    title="重命名对话"
+                  >
+                    <Edit3 size={14} />
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -373,11 +532,16 @@ function InputArea({
 }
 
 function ChatApp() {
-  const [conversations, setConversations] = useState<Conversation[]>(mockConversations);
-  const [activeId, setActiveId] = useState<string>(mockConversations[0].id);
+  const [initialChatState] = useState(loadChatState);
+  const [conversations, setConversations] = useState<Conversation[]>(
+    initialChatState.conversations,
+  );
+  const [activeId, setActiveId] = useState<string>(initialChatState.activeId);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(0);
+  const [headerEditing, setHeaderEditing] = useState(false);
+  const [headerTitle, setHeaderTitle] = useState("");
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0],
@@ -389,6 +553,14 @@ function ChatApp() {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [active?.messages, loading]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_CONVERSATIONS_STORAGE_KEY, JSON.stringify(conversations));
+  }, [conversations]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_ACTIVE_STORAGE_KEY, activeId);
+  }, [activeId]);
 
   useEffect(() => {
     if (!loading) return;
@@ -403,12 +575,38 @@ function ChatApp() {
     setConversations((prev) => prev.map((c) => (c.id === activeId ? fn(c) : c)));
   };
 
+  const renameConversation = (id: string, title: string) => {
+    const nextTitle = title.trim() || DEFAULT_CONVERSATION_TITLE;
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === id ? { ...c, title: nextTitle, updated_at: nowISO() } : c,
+      ),
+    );
+  };
+
+  const startHeaderRename = () => {
+    if (!active) return;
+    setHeaderTitle(active.title);
+    setHeaderEditing(true);
+  };
+
+  const finishHeaderRename = () => {
+    if (!active) return;
+    renameConversation(active.id, headerTitle);
+    setHeaderEditing(false);
+    setHeaderTitle("");
+  };
+
   const handleSend = async () => {
     const q = input.trim();
     if (!q || loading) return;
     setInput("");
     updateActive((c) => ({
       ...c,
+      title:
+        isDefaultTitle(c.title) && c.messages.length === 0
+          ? generateConversationTitle(q)
+          : c.title,
       messages: [...c.messages, { role: "user", content: q }],
       updated_at: nowISO(),
     }));
@@ -430,30 +628,26 @@ function ChatApp() {
   };
 
   const handleNew = () => {
-    const conv: Conversation = {
-      id: uid(),
-      title: "新对话",
-      messages: [],
-      updated_at: nowISO(),
-    };
+    const conv = createConversation();
     setConversations((prev) => [conv, ...prev]);
     setActiveId(conv.id);
+    setHeaderEditing(false);
   };
 
   const handleClear = () => {
-    updateActive((c) => ({ ...c, messages: [], title: "新对话", updated_at: nowISO() }));
+    updateActive((c) => ({
+      ...c,
+      messages: [],
+      title: DEFAULT_CONVERSATION_TITLE,
+      updated_at: nowISO(),
+    }));
   };
 
   const handleDelete = (id: string) => {
     setConversations((prev) => {
       const next = prev.filter((c) => c.id !== id);
       if (next.length === 0) {
-        const fresh: Conversation = {
-          id: uid(),
-          title: "新对话",
-          messages: [],
-          updated_at: nowISO(),
-        };
+        const fresh = createConversation();
         setActiveId(fresh.id);
         return [fresh];
       }
@@ -470,12 +664,63 @@ function ChatApp() {
         onSelect={setActiveId}
         onNew={handleNew}
         onDelete={handleDelete}
+        onRename={renameConversation}
       />
       <main className="flex flex-1 flex-col">
         <header className="border-b border-gray-200 bg-white px-6 py-3">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-base font-semibold text-gray-900">{active?.title}</h1>
+              <div className="flex items-center gap-2">
+                {headerEditing ? (
+                  <>
+                    <input
+                      value={headerTitle}
+                      onChange={(e) => setHeaderTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          finishHeaderRename();
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setHeaderEditing(false);
+                          setHeaderTitle("");
+                        }
+                      }}
+                      autoFocus
+                      className="h-8 min-w-64 rounded border border-medical-200 px-2 text-base font-semibold text-gray-900 outline-none focus:border-medical-500"
+                    />
+                    <button
+                      onClick={finishHeaderRename}
+                      className="text-gray-400 transition hover:text-medical-600"
+                      title="保存名称"
+                    >
+                      <Check size={16} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setHeaderEditing(false);
+                        setHeaderTitle("");
+                      }}
+                      className="text-gray-400 transition hover:text-gray-600"
+                      title="取消重命名"
+                    >
+                      <X size={16} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h1 className="text-base font-semibold text-gray-900">{active?.title}</h1>
+                    <button
+                      onClick={startHeaderRename}
+                      className="text-gray-300 transition hover:text-medical-600"
+                      title="重命名对话"
+                    >
+                      <Edit3 size={15} />
+                    </button>
+                  </>
+                )}
+              </div>
               <div className="text-xs text-gray-500">KGRAG 检索增强生成 · 图谱 + 向量混合召回</div>
             </div>
             <div className="flex items-center gap-2 rounded-full bg-medical-50 px-3 py-1 text-xs font-medium text-medical-700">
