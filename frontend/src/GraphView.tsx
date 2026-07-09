@@ -7,20 +7,20 @@ interface Props {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Entity: "#64748b",
-  Condition: "#ef4444",
+  Entity: "#0ea5e9",
+  Condition: "#f43f5e",
   AssessmentTool: "#2563eb",
   Intervention: "#10b981",
-  Symptom: "#f59e0b",
-  Symptoms: "#f59e0b",
+  Symptom: "#f97316",
+  Symptoms: "#f97316",
   Drug: "#8b5cf6",
   Comorbidity: "#ec4899",
-  Risk: "#dc2626",
+  Risk: "#ef4444",
   Mechanism: "#14b8a6",
   Task: "#6366f1",
-  Setting: "#0ea5e9",
+  Setting: "#06b6d4",
   AgeStage: "#84cc16",
-  Claim: "#a855f7",
+  Claim: "#d946ef",
 };
 
 const CATEGORIES = [
@@ -59,14 +59,21 @@ export default function GraphView({ nodes, edges }: Props) {
       id: n.id,
       name: n.name,
       category: categoryIndex(n.type),
-      symbolSize: 34,
+      symbolSize: 42,
       label: {
         show: true,
         formatter: (p: { name: string }) => {
           const name = p.name || "";
           return name.length > 16 ? `${name.slice(0, 16)}...` : name;
         },
-        fontSize: 11,
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#0f172a",
+        backgroundColor: "rgba(255,255,255,0.86)",
+        borderColor: "rgba(148,163,184,0.28)",
+        borderWidth: 1,
+        borderRadius: 4,
+        padding: [2, 4],
       },
     }));
     const seriesEdges = edges
@@ -78,7 +85,12 @@ export default function GraphView({ nodes, edges }: Props) {
           show: true,
           formatter: e.relation,
           fontSize: 10,
-          color: "#6b7280",
+          color: "#334155",
+          backgroundColor: "rgba(255,255,255,0.9)",
+          borderColor: "rgba(37,99,235,0.18)",
+          borderWidth: 1,
+          borderRadius: 3,
+          padding: [1, 3],
         },
       }));
 
@@ -111,19 +123,28 @@ export default function GraphView({ nodes, edges }: Props) {
           roam: true,
           draggable: true,
           force: {
-            repulsion: 220,
-            edgeLength: 140,
-            gravity: 0.1,
+            repulsion: 280,
+            edgeLength: 150,
+            gravity: 0.08,
           },
           categories: CATEGORIES,
           data: seriesNodes,
           links: seriesEdges,
-          lineStyle: { color: "#94a3b8", width: 1.5, curveness: 0.12 },
+          lineStyle: { color: "#3b82f6", width: 2, opacity: 0.72, curveness: 0.14 },
           edgeSymbol: ["none", "arrow"],
-          edgeSymbolSize: 8,
+          edgeSymbolSize: 10,
           itemStyle: {
             color: (p: { data: { category: number } }) =>
-              CATEGORY_COLORS[CATEGORIES[p.data.category]?.name] || "#6b7280",
+              CATEGORY_COLORS[CATEGORIES[p.data.category]?.name] || CATEGORY_COLORS.Entity,
+            borderColor: "#ffffff",
+            borderWidth: 3,
+            shadowBlur: 12,
+            shadowColor: "rgba(15,23,42,0.2)",
+          },
+          emphasis: {
+            focus: "adjacency",
+            lineStyle: { width: 3, opacity: 0.95 },
+            itemStyle: { shadowBlur: 18, shadowColor: "rgba(37,99,235,0.35)" },
           },
         },
       ],
