@@ -489,6 +489,7 @@ function AiBubble({ msg }: { msg: AiMessage }) {
   const [showCitations, setShowCitations] = useState(false);
   const hasGraph = (msg.relations?.length ?? 0) > 0;
   const hasCitations = (msg.citations?.length ?? 0) > 0;
+  const waitingForFirstToken = msg.content.trim().length === 0;
 
   return (
     <div className="flex justify-start">
@@ -498,9 +499,16 @@ function AiBubble({ msg }: { msg: AiMessage }) {
         </div>
         <div className="flex-1 space-y-2">
           <div className="rounded-2xl rounded-bl-sm border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <div className="markdown-body text-sm text-gray-800">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-            </div>
+            {waitingForFirstToken ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <Loader2 size={15} className="animate-spin text-medical-600" />
+                <span>正在等待模型返回…</span>
+              </div>
+            ) : (
+              <div className="markdown-body text-sm text-gray-800">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              </div>
+            )}
           </div>
 
           {hasCitations && (
