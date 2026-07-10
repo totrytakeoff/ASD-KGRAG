@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -251,6 +252,7 @@ async def health():
 
 @app.post("/ask")
 async def ask(body: AskRequest, request: Request):
+    started_at = time.perf_counter()
     ns = default_namespace(
         query=body.query,
         keywords=body.keywords,
@@ -269,7 +271,8 @@ async def ask(body: AskRequest, request: Request):
     try:
         if body.agent_mode:
             trace = AgentTrace(query=body.query)
-            result = run_toolized_agent(
+            result = await run_in_threadpool(
+                run_toolized_agent,
                 ns,
                 driver=request.app.state.neo4j_driver,
                 embed_model=request.app.state.embed_model,
@@ -279,7 +282,8 @@ async def ask(body: AskRequest, request: Request):
             if body.include_trace:
                 result["agent_trace"] = trace.to_dict()
         else:
-            result = answer_query(
+            result = await run_in_threadpool(
+                answer_query,
                 ns,
                 driver=request.app.state.neo4j_driver,
                 embed_model=request.app.state.embed_model,
@@ -291,6 +295,8 @@ async def ask(body: AskRequest, request: Request):
             status_code=500,
             content={"error": "qa_failed", "detail": str(exc)},
         )
+    if isinstance(result, dict):
+        result.setdefault("timing", {})["api_total_sec"] = round(time.perf_counter() - started_at, 3)
     return result
 
 

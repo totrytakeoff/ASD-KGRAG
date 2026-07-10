@@ -765,18 +765,30 @@ def summarize_context(context: dict) -> dict:
 
 
 def answer_query(args, *, driver=None, embed_model=None, qdrant_client=None) -> dict:
+    t0 = time.perf_counter()
     context = retrieve_context(args, driver=driver, embed_model=embed_model, qdrant_client=qdrant_client)
+    retrieve_sec = time.perf_counter() - t0
+    prompt_t0 = time.perf_counter()
     messages = build_prompt(context, args.max_chars_per_chunk)
+    prompt_sec = time.perf_counter() - prompt_t0
+    prompt_chars = sum(len(m.get("content", "")) for m in messages)
     result = {
         "query": context["query"],
         "dry_run": bool(args.dry_run),
         "context": summarize_context(context),
+        "timing": {
+            "retrieve_sec": round(retrieve_sec, 3),
+            "prompt_build_sec": round(prompt_sec, 3),
+            "prompt_chars": prompt_chars,
+            "llm_sec": 0.0,
+        },
     }
     if args.dry_run:
         result["prompt_preview"] = messages[-1]["content"]
         return result
     if not args.llm_api_key:
         raise RuntimeError("LLM API key is not set. Use dry_run or set LLM_API_KEY / OPENAI_API_KEY.")
+    llm_t0 = time.perf_counter()
     result["answer"] = call_openai_compatible(
         model=args.llm_model,
         messages=messages,
@@ -786,6 +798,7 @@ def answer_query(args, *, driver=None, embed_model=None, qdrant_client=None) -> 
         max_retries=args.llm_max_retries,
         max_tokens=args.llm_max_tokens,
     )
+    result["timing"]["llm_sec"] = round(time.perf_counter() - llm_t0, 3)
     return result
 
 
