@@ -42,7 +42,7 @@ function EditModelDialog({
         </div>
         <div className="space-y-3">
           {[
-            { key: "name", label: "模型名称", type: "text", placeholder: "deepseek-ai/DeepSeek-V4-Flash" },
+            { key: "name", label: "模型名称", type: "text", placeholder: "Qwen/Qwen3.5-27B" },
             { key: "base_url", label: "API 地址", type: "text", placeholder: "https://api.openai.com/v1" },
             { key: "api_key", label: "API Key", type: "password", placeholder: "sk-..." },
             { key: "timeout", label: "超时(s)", type: "number" },
@@ -190,7 +190,7 @@ export default function DashboardSettings() {
         <h2 className="mb-4 text-base font-semibold text-gray-800">当前问答模型</h2>
         <div className="grid grid-cols-2 gap-4">
           {[
-            { key: "name", label: "模型名称", placeholder: "deepseek-ai/DeepSeek-V4-Flash" },
+            { key: "name", label: "模型名称", placeholder: "Qwen/Qwen3.5-27B" },
             { key: "base_url", label: "API 地址", placeholder: "https://api.openai.com/v1" },
             { key: "api_key", label: "API Key", placeholder: "sk-..." },
           ].map((f) => (

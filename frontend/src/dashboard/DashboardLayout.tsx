@@ -7,6 +7,7 @@ import {
   Eye,
   FileText,
   GitBranch,
+  Gauge,
   LayoutDashboard,
   LogOut,
   Network,
@@ -30,6 +31,7 @@ const navItems: NavItem[] = [
   { id: "divider1", label: "―", icon: <span /> },
   { id: "eval-questions", label: "评估题集", icon: <CheckSquare size={16} /> },
   { id: "eval-runs", label: "评估运行", icon: <BarChart3 size={16} /> },
+  { id: "performance", label: "模型性能", icon: <Gauge size={16} /> },
   { id: "aliases", label: "别名管理", icon: <GitBranch size={16} /> },
   { id: "settings", label: "系统设置", icon: <Settings size={16} /> },
 ];

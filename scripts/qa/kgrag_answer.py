@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict
+from copy import deepcopy
 import json
 import os
 import re
 import socket
 import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -37,7 +40,7 @@ from hybrid_search import (  # noqa: E402
 )
 
 
-DEFAULT_LLM_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
+DEFAULT_LLM_MODEL = "Qwen/Qwen3.5-27B"
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
 
@@ -50,6 +53,67 @@ DEFAULT_QA_OPTIONS = {
     "graph_evidence_pool_k": 30,
     "max_chars_per_chunk": 900,
 }
+
+RETRIEVAL_CACHE_TTL_SECONDS = 600
+RETRIEVAL_CACHE_MAX_ENTRIES = 256
+_RETRIEVAL_CACHE: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
+_RETRIEVAL_CACHE_LOCK = threading.Lock()
+
+
+def model_request_options(model: str) -> dict:
+    normalized = (model or "").lower()
+    if normalized.startswith("qwen/qwen3"):
+        return {"enable_thinking": False}
+    return {}
+
+
+def _retrieval_cache_key(args) -> tuple:
+    return (
+        normalize_alias_key(args.query),
+        tuple(sorted(normalize_alias_key(item) for item in (args.keywords or []))),
+        args.collection,
+        args.retrieval_k,
+        args.context_k,
+        args.relation_k,
+        args.relation_evidence_k,
+        args.graph_evidence_k,
+        args.graph_evidence_pool_k,
+    )
+
+
+def retrieve_context_cached(args, *, driver=None, embed_model=None, qdrant_client=None) -> tuple[dict, bool]:
+    if getattr(args, "disable_retrieval_cache", False):
+        return (
+            retrieve_context(
+                args,
+                driver=driver,
+                embed_model=embed_model,
+                qdrant_client=qdrant_client,
+            ),
+            False,
+        )
+    key = _retrieval_cache_key(args)
+    now = time.monotonic()
+    with _RETRIEVAL_CACHE_LOCK:
+        cached = _RETRIEVAL_CACHE.get(key)
+        if cached and now - cached[0] <= RETRIEVAL_CACHE_TTL_SECONDS:
+            _RETRIEVAL_CACHE.move_to_end(key)
+            return deepcopy(cached[1]), True
+        if cached:
+            _RETRIEVAL_CACHE.pop(key, None)
+
+    context = retrieve_context(
+        args,
+        driver=driver,
+        embed_model=embed_model,
+        qdrant_client=qdrant_client,
+    )
+    with _RETRIEVAL_CACHE_LOCK:
+        _RETRIEVAL_CACHE[key] = (now, deepcopy(context))
+        _RETRIEVAL_CACHE.move_to_end(key)
+        while len(_RETRIEVAL_CACHE) > RETRIEVAL_CACHE_MAX_ENTRIES:
+            _RETRIEVAL_CACHE.popitem(last=False)
+    return context, False
 
 
 def normalize_alias_key(text: str) -> str:
@@ -640,6 +704,7 @@ def call_openai_compatible(
         "model": model,
         "messages": messages,
         "temperature": 0.2,
+        **model_request_options(model),
     }
     if max_tokens > 0:
         body["max_tokens"] = max_tokens
@@ -700,6 +765,7 @@ def call_openai_compatible_stream(
         "messages": messages,
         "temperature": 0.2,
         "stream": True,
+        **model_request_options(model),
     }
     if max_tokens > 0:
         body["max_tokens"] = max_tokens
@@ -731,13 +797,14 @@ def call_openai_compatible_stream(
                     text = delta.get("content") or choice.get("text") or ""
                     if text:
                         yielded = True
-                        yield text
+                        yield {"type": "token", "text": text}
             return
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
             retriable = exc.code in {429, 500, 502, 503, 504}
             if retriable and not yielded and attempt < max_retries:
                 attempt += 1
+                yield {"type": "retry", "attempt": attempt, "reason": f"HTTP {exc.code}"}
                 time.sleep(attempt)
                 continue
             raise RuntimeError(f"LLM API error: {exc.code} {detail}") from exc
@@ -751,6 +818,7 @@ def call_openai_compatible_stream(
         ) as exc:
             if not yielded and attempt < max_retries:
                 attempt += 1
+                yield {"type": "retry", "attempt": attempt, "reason": str(exc)}
                 time.sleep(attempt)
                 continue
             raise RuntimeError(f"LLM network error: {exc}") from exc
@@ -841,9 +909,42 @@ def summarize_context(context: dict) -> dict:
     }
 
 
+def build_evidence_fallback(context_summary: dict) -> str:
+    contexts = context_summary.get("contexts") or []
+    relations = context_summary.get("relations") or []
+    lines = [
+        "## 检索证据已返回",
+        "",
+        "生成模型暂时未能完成回答。下面仅列出本次检索到的证据，不能视为完整医学结论。",
+    ]
+    if contexts:
+        lines.extend(["", "### 文献证据"])
+        for item in contexts:
+            citation_id = item.get("citation_id") or "C?"
+            title = item.get("title") or "未命名文献"
+            year = item.get("year") or "n.d."
+            level = item.get("evidence_level") or "unknown"
+            lines.append(f"- [{citation_id}] {title} ({year}, evidence={level})")
+    if relations:
+        lines.extend(["", "### 图谱关系"])
+        for row in relations[:10]:
+            graph_id = row.get("graph_id") or "G?"
+            lines.append(
+                f"- [{graph_id}] {row.get('source')} -{row.get('relation')}-> {row.get('target')} "
+                f"(support={row.get('support_count')}, confidence={row.get('confidence')})"
+            )
+    lines.extend(["", "请稍后重试生成，或切换问答模式/模型后重新请求。"])
+    return "\n".join(lines)
+
+
 def answer_query(args, *, driver=None, embed_model=None, qdrant_client=None) -> dict:
     t0 = time.perf_counter()
-    context = retrieve_context(args, driver=driver, embed_model=embed_model, qdrant_client=qdrant_client)
+    context, cache_hit = retrieve_context_cached(
+        args,
+        driver=driver,
+        embed_model=embed_model,
+        qdrant_client=qdrant_client,
+    )
     retrieve_sec = time.perf_counter() - t0
     prompt_t0 = time.perf_counter()
     messages = build_prompt(context, args.max_chars_per_chunk)
@@ -858,31 +959,51 @@ def answer_query(args, *, driver=None, embed_model=None, qdrant_client=None) -> 
             "prompt_build_sec": round(prompt_sec, 3),
             "prompt_chars": prompt_chars,
             "llm_sec": 0.0,
+            "cache_hit": cache_hit,
+            "profile": getattr(args, "qa_profile", "custom"),
         },
     }
     if args.dry_run:
         result["prompt_preview"] = messages[-1]["content"]
+        result["timing"]["api_total_sec"] = round(time.perf_counter() - t0, 3)
         return result
     if not args.llm_api_key:
         raise RuntimeError("LLM API key is not set. Use dry_run or set LLM_API_KEY / OPENAI_API_KEY.")
     llm_t0 = time.perf_counter()
-    result["answer"] = call_openai_compatible(
-        model=args.llm_model,
-        messages=messages,
-        base_url=args.llm_base_url,
-        api_key=args.llm_api_key,
-        timeout_seconds=args.llm_timeout,
-        max_retries=args.llm_max_retries,
-        max_tokens=args.llm_max_tokens,
-    )
+    try:
+        result["answer"] = call_openai_compatible(
+            model=args.llm_model,
+            messages=messages,
+            base_url=args.llm_base_url,
+            api_key=args.llm_api_key,
+            timeout_seconds=args.llm_timeout,
+            max_retries=args.llm_max_retries,
+            max_tokens=args.llm_max_tokens,
+        )
+        result["degraded"] = False
+    except Exception as exc:
+        result["answer"] = build_evidence_fallback(result["context"])
+        result["degraded"] = True
+        result["error"] = {"type": "llm_generation_failed", "detail": str(exc)}
     result["timing"]["llm_sec"] = round(time.perf_counter() - llm_t0, 3)
+    result["timing"]["api_total_sec"] = round(time.perf_counter() - t0, 3)
     return result
 
 
 def stream_answer_query_events(args, *, driver=None, embed_model=None, qdrant_client=None):
     started_at = time.perf_counter()
+    yield {
+        "type": "status",
+        "status": "retrieving",
+        "profile": getattr(args, "qa_profile", "custom"),
+    }
     t0 = time.perf_counter()
-    context = retrieve_context(args, driver=driver, embed_model=embed_model, qdrant_client=qdrant_client)
+    context, cache_hit = retrieve_context_cached(
+        args,
+        driver=driver,
+        embed_model=embed_model,
+        qdrant_client=qdrant_client,
+    )
     retrieve_sec = time.perf_counter() - t0
     prompt_t0 = time.perf_counter()
     messages = build_prompt(context, args.max_chars_per_chunk)
@@ -893,6 +1014,10 @@ def stream_answer_query_events(args, *, driver=None, embed_model=None, qdrant_cl
         "prompt_build_sec": round(prompt_sec, 3),
         "prompt_chars": prompt_chars,
         "llm_sec": 0.0,
+        "first_token_sec": None,
+        "retry_count": 0,
+        "cache_hit": cache_hit,
+        "profile": getattr(args, "qa_profile", "custom"),
     }
     context_payload = {
         "query": context["query"],
@@ -906,18 +1031,24 @@ def stream_answer_query_events(args, *, driver=None, embed_model=None, qdrant_cl
         return
 
     yield {"type": "context", **context_payload}
+    yield {"type": "status", "status": "waiting_model", "timing": timing}
     if not args.llm_api_key:
         yield {
-            "type": "error",
-            "error": "qa_failed",
+            "type": "degraded",
+            "status": "degraded",
+            "error": "llm_configuration_missing",
             "detail": "LLM API key is not set. Use dry_run or set LLM_API_KEY / OPENAI_API_KEY.",
+            "answer": build_evidence_fallback(context_payload["context"]),
+            "degraded": True,
+            "timing": timing,
         }
         return
 
     answer_parts = []
     llm_t0 = time.perf_counter()
+    first_token_at = None
     try:
-        for text in call_openai_compatible_stream(
+        for provider_event in call_openai_compatible_stream(
             model=args.llm_model,
             messages=messages,
             base_url=args.llm_base_url,
@@ -926,15 +1057,38 @@ def stream_answer_query_events(args, *, driver=None, embed_model=None, qdrant_cl
             max_retries=args.llm_max_retries,
             max_tokens=args.llm_max_tokens,
         ):
+            if provider_event.get("type") == "retry":
+                timing["retry_count"] = int(provider_event.get("attempt") or 0)
+                yield {
+                    "type": "status",
+                    "status": "retrying",
+                    "attempt": timing["retry_count"],
+                    "reason": provider_event.get("reason"),
+                    "timing": timing,
+                }
+                continue
+            text = provider_event.get("text") or ""
+            if not text:
+                continue
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+                timing["first_token_sec"] = round(first_token_at - llm_t0, 3)
+                yield {"type": "status", "status": "generating", "timing": timing}
             answer_parts.append(text)
             yield {"type": "token", "text": text}
+        if not answer_parts:
+            raise RuntimeError("LLM stream completed without answer content.")
     except Exception as exc:
         timing["llm_sec"] = round(time.perf_counter() - llm_t0, 3)
         timing["api_total_sec"] = round(time.perf_counter() - started_at, 3)
+        fallback_answer = build_evidence_fallback(context_payload["context"])
         yield {
-            "type": "error",
-            "error": "qa_failed",
+            "type": "degraded",
+            "status": "degraded",
+            "error": "llm_generation_failed",
             "detail": str(exc),
+            "answer": fallback_answer,
+            "degraded": True,
             "timing": timing,
         }
         return
@@ -944,6 +1098,7 @@ def stream_answer_query_events(args, *, driver=None, embed_model=None, qdrant_cl
     yield {
         "type": "done",
         "answer": "".join(answer_parts),
+        "degraded": False,
         "timing": timing,
     }
 

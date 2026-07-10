@@ -181,6 +181,21 @@ export async function fetchEvalRunDetail(runId: string) {
   return api(`/dashboard/eval/runs/${encodeURIComponent(runId)}`);
 }
 
+export async function startLatencyBenchmark(data: Record<string, any>) {
+  return api("/dashboard/benchmarks", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchLatencyBenchmarks() {
+  return api("/dashboard/benchmarks");
+}
+
+export async function fetchLatencyBenchmark(jobId: string) {
+  return api(`/dashboard/benchmarks/${encodeURIComponent(jobId)}`);
+}
+
 // Phase 2.5: Student Returns
 
 export async function uploadReturn(file: File): Promise<any> {

@@ -19,6 +19,7 @@ ASD-KGRAG.context.md
 .env
 .env.*
 !.env.example
+config/qa_settings.json
 
 .playwright-mcp/
 node_modules

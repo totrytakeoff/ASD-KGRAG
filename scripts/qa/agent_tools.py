@@ -29,10 +29,12 @@ from agent_router import route_query  # noqa: E402
 from evaluate_qa import evaluate_result  # noqa: E402
 from kgrag_answer import (  # noqa: E402
     build_prompt,
+    build_evidence_fallback,
     call_openai_compatible,
+    call_openai_compatible_stream,
     default_namespace,
     expand_keywords,
-    retrieve_context,
+    retrieve_context_cached,
     summarize_context,
 )
 
@@ -68,7 +70,7 @@ def retrieve_context_tool(
     embed_model=None,
     qdrant_client=None,
 ) -> dict[str, Any]:
-    context = retrieve_context(
+    context, cache_hit = retrieve_context_cached(
         args,
         driver=driver,
         embed_model=embed_model,
@@ -77,6 +79,7 @@ def retrieve_context_tool(
     return {
         "raw_context": context,
         "summary": summarize_context(context),
+        "cache_hit": cache_hit,
     }
 
 
@@ -171,6 +174,9 @@ def merge_retrieved_contexts(primary: dict[str, Any], supplemental: list[dict[st
     return {
         "raw_context": raw_context,
         "summary": summarize_context(raw_context),
+        "cache_hit": bool(primary.get("cache_hit")) and all(
+            bool(item.get("cache_hit")) for item in supplemental
+        ),
     }
 
 
@@ -323,6 +329,7 @@ def run_toolized_agent(
     trace=None,
 ) -> dict[str, Any]:
     workflow_start = time.time()
+    workflow_perf_start = time.perf_counter()
 
     started = time.time()
     intent = route_query(args.query)
@@ -405,7 +412,15 @@ def run_toolized_agent(
             )
 
     started = time.time()
-    drafted = draft_answer_tool(args, retrieved["raw_context"])
+    try:
+        drafted = draft_answer_tool(args, retrieved["raw_context"])
+    except Exception as exc:
+        drafted = {
+            "dry_run": False,
+            "answer": build_evidence_fallback(retrieved["summary"]),
+            "degraded": True,
+            "error": {"type": "llm_generation_failed", "detail": str(exc)},
+        }
     result = {
         "query": args.query,
         "dry_run": bool(args.dry_run),
@@ -423,7 +438,137 @@ def run_toolized_agent(
     started = time.time()
     validation = validate_answer_tool(args.query, result, evidence, time.time() - workflow_start, intent)
     result["agent"]["validation"] = validation
+    result["timing"] = {
+        "api_total_sec": round(time.perf_counter() - workflow_perf_start, 3),
+        "cache_hit": bool(retrieved.get("cache_hit")),
+        "profile": getattr(args, "qa_profile", "custom"),
+    }
     if trace:
         trace.add_step("validate_answer", outputs=validation, started_at=started)
 
     return result
+
+
+def stream_toolized_agent_events(
+    args: SimpleNamespace,
+    *,
+    driver=None,
+    embed_model=None,
+    qdrant_client=None,
+    trace=None,
+):
+    workflow_start = time.perf_counter()
+    yield {"type": "status", "status": "routing", "profile": getattr(args, "qa_profile", "custom")}
+    intent = route_query(args.query)
+    expansion = expand_query(args.query, args.keywords)
+
+    yield {"type": "status", "status": "retrieving", "profile": getattr(args, "qa_profile", "custom")}
+    retrieve_started = time.perf_counter()
+    retrieved = retrieve_context_tool(
+        args,
+        driver=driver,
+        embed_model=embed_model,
+        qdrant_client=qdrant_client,
+    )
+    evidence = merge_answer_policy(intent, inspect_evidence(retrieved["summary"]))
+    followup_plans = plan_followup_retrieval(args.query, intent, expansion, evidence)
+    if followup_plans:
+        yield {"type": "status", "status": "followup_retrieval"}
+        followup_result = retrieve_context_tool(
+            build_followup_args(args, followup_plans[0]),
+            driver=driver,
+            embed_model=embed_model,
+            qdrant_client=qdrant_client,
+        )
+        retrieved = merge_retrieved_contexts(retrieved, [followup_result], args.context_k)
+        evidence = merge_answer_policy(intent, inspect_evidence(retrieved["summary"]))
+
+    retrieve_sec = time.perf_counter() - retrieve_started
+    prompt_started = time.perf_counter()
+    messages = build_prompt(retrieved["raw_context"], args.max_chars_per_chunk)
+    prompt_sec = time.perf_counter() - prompt_started
+    timing = {
+        "retrieve_sec": round(retrieve_sec, 3),
+        "prompt_build_sec": round(prompt_sec, 3),
+        "prompt_chars": sum(len(item.get("content", "")) for item in messages),
+        "llm_sec": 0.0,
+        "first_token_sec": None,
+        "retry_count": 0,
+        "cache_hit": bool(retrieved.get("cache_hit")),
+        "profile": getattr(args, "qa_profile", "custom"),
+    }
+    yield {
+        "type": "context",
+        "query": args.query,
+        "context": retrieved["summary"],
+        "agent": {"workflow": "toolized_kgrag_v1", "intent": intent, "evidence": evidence},
+        "timing": timing,
+    }
+    if args.dry_run:
+        timing["api_total_sec"] = round(time.perf_counter() - workflow_start, 3)
+        yield {
+            "type": "done",
+            "answer": "",
+            "prompt_preview": messages[-1]["content"],
+            "degraded": False,
+            "timing": timing,
+        }
+        return
+    yield {"type": "status", "status": "waiting_model", "timing": timing}
+
+    if not args.llm_api_key:
+        timing["api_total_sec"] = round(time.perf_counter() - workflow_start, 3)
+        yield {
+            "type": "degraded",
+            "status": "degraded",
+            "answer": build_evidence_fallback(retrieved["summary"]),
+            "detail": "LLM API key is not set.",
+            "degraded": True,
+            "timing": timing,
+        }
+        return
+
+    answer_parts = []
+    first_token_at = None
+    llm_started = time.perf_counter()
+    try:
+        for provider_event in call_openai_compatible_stream(
+            model=args.llm_model,
+            messages=messages,
+            base_url=args.llm_base_url,
+            api_key=args.llm_api_key,
+            timeout_seconds=args.llm_timeout,
+            max_retries=args.llm_max_retries,
+            max_tokens=args.llm_max_tokens,
+        ):
+            if provider_event.get("type") == "retry":
+                timing["retry_count"] = int(provider_event.get("attempt") or 0)
+                yield {"type": "status", "status": "retrying", "timing": timing}
+                continue
+            text = provider_event.get("text") or ""
+            if not text:
+                continue
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+                timing["first_token_sec"] = round(first_token_at - llm_started, 3)
+                yield {"type": "status", "status": "generating", "timing": timing}
+            answer_parts.append(text)
+            yield {"type": "token", "text": text}
+        if not answer_parts:
+            raise RuntimeError("LLM stream completed without answer content.")
+    except Exception as exc:
+        timing["llm_sec"] = round(time.perf_counter() - llm_started, 3)
+        timing["api_total_sec"] = round(time.perf_counter() - workflow_start, 3)
+        yield {
+            "type": "degraded",
+            "status": "degraded",
+            "answer": build_evidence_fallback(retrieved["summary"]),
+            "detail": str(exc),
+            "degraded": True,
+            "timing": timing,
+        }
+        return
+
+    timing["llm_sec"] = round(time.perf_counter() - llm_started, 3)
+    timing["api_total_sec"] = round(time.perf_counter() - workflow_start, 3)
+    yield {"type": "done", "answer": "".join(answer_parts), "degraded": False, "timing": timing}

@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
+  Clock3,
   Edit3,
   Eraser,
   Loader2,
@@ -12,6 +13,7 @@ import {
   Search,
   Send,
   ShieldAlert,
+  Square,
   Stethoscope,
   Trash2,
   X,
@@ -20,7 +22,7 @@ import ReactMarkdown from "react-markdown";
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import GraphView from "./GraphView";
-import type { AiMessage, Conversation, Message } from "./types";
+import type { AiMessage, Conversation, Message, QaProfile } from "./types";
 import Login from "./dashboard/Login";
 import DashboardLayout from "./dashboard/DashboardLayout";
 import DashboardOverview from "./dashboard/DashboardOverview";
@@ -32,6 +34,7 @@ import DashboardGuide from "./dashboard/DashboardGuide";
 import DashboardSettings from "./dashboard/DashboardSettings";
 import DashboardEvalQuestions from "./dashboard/DashboardEvalQuestions";
 import DashboardEvalRuns from "./dashboard/DashboardEvalRuns";
+import DashboardPerformance from "./dashboard/DashboardPerformance";
 import DashboardAliases from "./dashboard/DashboardAliases";
 import { isAuthenticated, verifyAuth } from "./dashboard/api";
 
@@ -42,6 +45,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const DEFAULT_CONVERSATION_TITLE = "新对话";
 const CHAT_CONVERSATIONS_STORAGE_KEY = "kgrag_chat_conversations_v1";
 const CHAT_ACTIVE_STORAGE_KEY = "kgrag_chat_active_id_v1";
+const CHAT_PROFILE_STORAGE_KEY = "kgrag_chat_profile_v1";
 
 async function readErrorDetail(resp: Response) {
   try {
@@ -185,7 +189,7 @@ function loadChatState() {
   return { conversations: [fresh], activeId: fresh.id };
 }
 
-async function askBackend(query: string): Promise<AiMessage | null> {
+async function askBackend(query: string, profile: QaProfile): Promise<AiMessage | null> {
   try {
     const resp = await fetch("/ask", {
       method: "POST",
@@ -193,8 +197,8 @@ async function askBackend(query: string): Promise<AiMessage | null> {
       body: JSON.stringify({
         query,
         dry_run: false,
-        context_k: 6,
-        graph_evidence_k: 4,
+        profile,
+        agent_mode: true,
       }),
     });
     if (!resp.ok) {
@@ -215,6 +219,10 @@ async function askBackend(query: string): Promise<AiMessage | null> {
       role: "ai",
       content: data.answer,
       ...evidence,
+      profile,
+      status: data.degraded ? "degraded" : "done",
+      timing: data.timing,
+      degraded: Boolean(data.degraded),
       retrieved_at: nowISO(),
     };
   } catch {
@@ -224,16 +232,22 @@ async function askBackend(query: string): Promise<AiMessage | null> {
 
 type StreamPatch = (updater: (current: AiMessage | null) => AiMessage) => void;
 
-async function askBackendStream(query: string, patch: StreamPatch): Promise<void> {
+async function askBackendStream(
+  query: string,
+  profile: QaProfile,
+  patch: StreamPatch,
+  signal: AbortSignal,
+): Promise<void> {
   const resp = await fetch("/ask/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       query,
       dry_run: false,
-      context_k: 6,
-      graph_evidence_k: 4,
+      profile,
+      agent_mode: true,
     }),
+    signal,
   });
   if (!resp.ok) {
     const detail = await readErrorDetail(resp);
@@ -247,14 +261,46 @@ async function askBackendStream(query: string, patch: StreamPatch): Promise<void
   const decoder = new TextDecoder();
   const reader = resp.body.getReader();
   let buffer = "";
+  let pendingText = "";
+  let flushTimer: number | null = null;
+
+  const flushPendingText = () => {
+    if (flushTimer !== null) {
+      window.clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    if (!pendingText) return;
+    const text = pendingText;
+    pendingText = "";
+    patch((current) => ({
+      ...(current || { role: "ai", content: "" }),
+      content: `${current?.content || ""}${text}`,
+      profile,
+      status: "generating",
+      retrieved_at: nowISO(),
+    }));
+  };
 
   const applyEvent = (event: any) => {
     if (!event || typeof event !== "object") return;
+    if (event.type === "status") {
+      patch((current) => ({
+        ...(current || { role: "ai", content: "" }),
+        profile,
+        status: event.status,
+        timing: { ...(current?.timing || {}), ...(event.timing || {}) },
+        retrieved_at: nowISO(),
+      }));
+      return;
+    }
     if (event.type === "context") {
       const evidence = evidenceFromContext(event.context || {});
       patch((current) => ({
         ...(current || { role: "ai", content: "" }),
         ...evidence,
+        profile,
+        status: current?.status || "waiting_model",
+        timing: { ...(current?.timing || {}), ...(event.timing || {}) },
         retrieved_at: nowISO(),
       }));
       return;
@@ -262,28 +308,50 @@ async function askBackendStream(query: string, patch: StreamPatch): Promise<void
     if (event.type === "token") {
       const text = event.text || "";
       if (!text) return;
+      pendingText += text;
+      if (flushTimer === null) {
+        flushTimer = window.setTimeout(flushPendingText, 50);
+      }
+      return;
+    }
+    if (event.type === "done") {
+      flushPendingText();
       patch((current) => ({
         ...(current || { role: "ai", content: "" }),
-        content: `${current?.content || ""}${text}`,
+        content: event.answer || current?.content || "",
+        profile,
+        status: "done",
+        timing: { ...(current?.timing || {}), ...(event.timing || {}) },
+        degraded: false,
         retrieved_at: nowISO(),
       }));
       return;
     }
-    if (event.type === "done") {
+    if (event.type === "degraded") {
+      flushPendingText();
       patch((current) => ({
         ...(current || { role: "ai", content: "" }),
         content: event.answer || current?.content || "",
+        profile,
+        status: "degraded",
+        timing: { ...(current?.timing || {}), ...(event.timing || {}) },
+        degraded: true,
         retrieved_at: nowISO(),
       }));
       return;
     }
     if (event.type === "error") {
+      flushPendingText();
       const errorMessage = buildAskErrorMessage(500, event.detail || event.error || "stream failed");
       patch((current) => ({
         ...(current || errorMessage),
         content: current?.content
           ? `${current.content}\n\n---\n${errorMessage.content}`
           : errorMessage.content,
+        profile,
+        status: "degraded",
+        timing: { ...(current?.timing || {}), ...(event.timing || {}) },
+        degraded: true,
         retrieved_at: nowISO(),
       }));
     }
@@ -314,6 +382,7 @@ async function askBackendStream(query: string, patch: StreamPatch): Promise<void
     if (done) break;
   }
   if (buffer.trim()) parseBlock(buffer);
+  flushPendingText();
 }
 
 function Sidebar({
@@ -490,6 +559,18 @@ function AiBubble({ msg }: { msg: AiMessage }) {
   const hasGraph = (msg.relations?.length ?? 0) > 0;
   const hasCitations = (msg.citations?.length ?? 0) > 0;
   const waitingForFirstToken = msg.content.trim().length === 0;
+  const waitingText =
+    msg.status === "routing"
+      ? "正在分析问题…"
+      : msg.status === "retrieving"
+      ? "正在检索证据…"
+      : msg.status === "followup_retrieval"
+        ? "正在补充检索证据…"
+      : msg.status === "retrying"
+        ? "模型响应超时，正在重试…"
+        : "正在等待模型返回…";
+  const profileLabel =
+    msg.profile === "fast" ? "快速" : msg.profile === "deep" ? "深度" : "平衡";
 
   return (
     <div className="flex justify-start">
@@ -502,7 +583,7 @@ function AiBubble({ msg }: { msg: AiMessage }) {
             {waitingForFirstToken ? (
               <div className="flex items-center gap-2 text-sm text-gray-500">
                 <Loader2 size={15} className="animate-spin text-medical-600" />
-                <span>正在等待模型返回…</span>
+                <span>{waitingText}</span>
               </div>
             ) : (
               <div className="markdown-body text-sm text-gray-800">
@@ -510,6 +591,26 @@ function AiBubble({ msg }: { msg: AiMessage }) {
               </div>
             )}
           </div>
+
+          {(msg.status === "generating" || msg.timing || msg.degraded) && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+              {msg.status === "generating" && (
+                <span className="flex items-center gap-1 text-medical-600">
+                  <Loader2 size={11} className="animate-spin" />
+                  正在生成
+                </span>
+              )}
+              {msg.profile && <span>{profileLabel}模式</span>}
+              {msg.timing?.first_token_sec != null && (
+                <span className="flex items-center gap-1">
+                  <Clock3 size={11} /> 首字 {msg.timing.first_token_sec}s
+                </span>
+              )}
+              {msg.timing?.api_total_sec != null && <span>总计 {msg.timing.api_total_sec}s</span>}
+              {msg.timing?.cache_hit && <span>检索缓存命中</span>}
+              {msg.degraded && <span className="text-amber-600">证据降级结果</span>}
+            </div>
+          )}
 
           {hasCitations && (
             <div className="rounded-lg border border-gray-100 bg-gray-50/60">
@@ -628,14 +729,20 @@ function InputArea({
   value,
   onChange,
   onSend,
+  onCancel,
   onClear,
   loading,
+  profile,
+  onProfileChange,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
+  onCancel: () => void;
   onClear: () => void;
   loading: boolean;
+  profile: QaProfile;
+  onProfileChange: (profile: QaProfile) => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -647,6 +754,29 @@ function InputArea({
 
   return (
     <div className="border-t border-gray-200 bg-white px-6 py-4">
+      <div className="mx-auto mb-2 flex max-w-4xl items-center">
+        <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+          {([
+            ["fast", "快速"],
+            ["balanced", "平衡"],
+            ["deep", "深度"],
+          ] as const).map(([profileValue, label]) => (
+            <button
+              key={profileValue}
+              type="button"
+              onClick={() => onProfileChange(profileValue)}
+              disabled={loading}
+              className={`h-7 min-w-14 rounded-md px-2 text-xs font-medium transition ${
+                profile === profileValue
+                  ? "bg-white text-medical-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              } disabled:opacity-50`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="mx-auto flex max-w-4xl items-end gap-2">
         <div className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2 shadow-sm focus-within:border-medical-400">
           <textarea
@@ -673,12 +803,14 @@ function InputArea({
           <Eraser size={15} />
         </button>
         <button
-          onClick={onSend}
-          disabled={loading || !value.trim()}
-          className="flex h-11 items-center gap-1.5 rounded-2xl bg-medical-600 px-5 text-sm font-medium text-white shadow-sm transition hover:bg-medical-700 disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={loading ? onCancel : onSend}
+          disabled={!loading && !value.trim()}
+          className={`flex h-11 items-center gap-1.5 rounded-2xl px-5 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+            loading ? "bg-red-500 hover:bg-red-600" : "bg-medical-600 hover:bg-medical-700"
+          }`}
         >
-          {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-          发送
+          {loading ? <Square size={14} fill="currentColor" /> : <Send size={15} />}
+          {loading ? "停止" : "发送"}
         </button>
       </div>
       <div className="mx-auto mt-2 flex max-w-4xl items-center gap-1.5 text-xs text-gray-400">
@@ -700,6 +832,11 @@ function ChatApp() {
   const [loadingStage, setLoadingStage] = useState(0);
   const [headerEditing, setHeaderEditing] = useState(false);
   const [headerTitle, setHeaderTitle] = useState("");
+  const [profile, setProfile] = useState<QaProfile>(() => {
+    const stored = localStorage.getItem(CHAT_PROFILE_STORAGE_KEY);
+    return stored === "fast" || stored === "deep" ? stored : "balanced";
+  });
+  const abortRef = useRef<AbortController | null>(null);
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0],
@@ -719,6 +856,12 @@ function ChatApp() {
   useEffect(() => {
     localStorage.setItem(CHAT_ACTIVE_STORAGE_KEY, activeId);
   }, [activeId]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_PROFILE_STORAGE_KEY, profile);
+  }, [profile]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!loading) return;
@@ -774,6 +917,8 @@ function ChatApp() {
       updated_at: nowISO(),
     }));
     setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     const patchAiMessage: StreamPatch = (updater) => {
       updateConversation(targetId, (c) => {
@@ -789,9 +934,19 @@ function ChatApp() {
     };
 
     try {
-      await askBackendStream(q, patchAiMessage);
-    } catch {
-      const ai = await askBackend(q);
+      await askBackendStream(q, profile, patchAiMessage, controller.signal);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        patchAiMessage((current) => ({
+          ...(current || { role: "ai", content: "" }),
+          content: current?.content || "已停止生成。",
+          profile,
+          status: "cancelled",
+          retrieved_at: nowISO(),
+        }));
+        return;
+      }
+      const ai = await askBackend(q, profile);
       patchAiMessage(
         () =>
           ai ?? {
@@ -801,8 +956,13 @@ function ChatApp() {
           },
       );
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
   };
 
   const handleNew = () => {
@@ -950,8 +1110,11 @@ function ChatApp() {
           value={input}
           onChange={setInput}
           onSend={handleSend}
+          onCancel={handleCancel}
           onClear={handleClear}
           loading={loading}
+          profile={profile}
+          onProfileChange={setProfile}
         />
       </main>
     </div>
@@ -994,6 +1157,8 @@ function DashboardApp() {
         return <DashboardEvalQuestions />;
       case "eval-runs":
         return <DashboardEvalRuns />;
+      case "performance":
+        return <DashboardPerformance />;
       case "aliases":
         return <DashboardAliases />;
       default:

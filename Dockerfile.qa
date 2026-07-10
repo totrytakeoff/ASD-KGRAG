@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements-qa.txt
 
 COPY scripts/ scripts/
 COPY config/ config/
-COPY .env* ./
 
 EXPOSE 8010
 

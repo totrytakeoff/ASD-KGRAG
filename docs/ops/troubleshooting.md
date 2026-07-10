@@ -123,7 +123,7 @@ dry-run 不需要 API key，真实生成需要。
 ```bash
 LLM_API_KEY="你的_key"
 LLM_BASE_URL="https://api.siliconflow.cn/v1/chat/completions"
-LLM_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+LLM_MODEL="Qwen/Qwen3.5-27B"
 ```
 
 验证 dry-run：

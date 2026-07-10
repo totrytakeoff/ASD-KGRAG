@@ -132,6 +132,7 @@ def evaluate_result(question: dict, result: dict, elapsed_seconds: float) -> dic
     contexts = ctx.get("contexts") or []
     relations = ctx.get("relations") or []
     answer = answer_text(result)
+    expects_answer = not bool(result.get("dry_run"))
     combined_context = context_text(result)
     expected_terms = question.get("expect_graph_terms") or []
 
@@ -163,6 +164,7 @@ def evaluate_result(question: dict, result: dict, elapsed_seconds: float) -> dic
     expects_research_boundary = bool(question.get("requires_research_boundary")) or relations_have_research_only
 
     checks = {
+        "answer_present": bool(answer.strip()) if expects_answer else True,
         "retrieved_context": metrics["contexts_count"] > 0,
         "retrieved_graph": (
             metrics["relations_count"] > 0
@@ -170,15 +172,15 @@ def evaluate_result(question: dict, result: dict, elapsed_seconds: float) -> dic
             or metrics["graph_entities_count"] > 0
         ),
         "expected_term_seen": metrics["has_expected_context_term"] is not False,
-        "answer_cited": metrics["answer_has_citation"] is not False,
+        "answer_cited": metrics["answer_has_citation"] is True if expects_answer else True,
         "guardrail_ok": (
-            metrics["answer_has_guardrail"] is not False
-            if question.get("requires_guardrail")
+            metrics["answer_has_guardrail"] is True
+            if question.get("requires_guardrail") and expects_answer
             else True
         ),
         "research_boundary_ok": (
-            metrics["answer_has_research_boundary"] is not False
-            if expects_research_boundary and answer
+            metrics["answer_has_research_boundary"] is True
+            if expects_research_boundary and expects_answer
             else True
         ),
         "no_clinical_overstatement": metrics["answer_avoids_clinical_overstatement"] is not False,

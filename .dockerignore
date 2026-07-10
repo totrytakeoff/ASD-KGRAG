@@ -1,0 +1,8 @@
+.git
+.env
+.env.*
+data
+frontend
+config/qa_settings.json
+**/__pycache__
+**/*.pyc

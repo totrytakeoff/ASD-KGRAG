@@ -15,9 +15,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -33,8 +33,9 @@ from kgrag_answer import (  # noqa: E402
     load_dotenv,
     stream_answer_query_events,
 )
-from agent_tools import run_toolized_agent  # noqa: E402
+from agent_tools import run_toolized_agent, stream_toolized_agent_events  # noqa: E402
 from agent_trace import AgentTrace  # noqa: E402
+from qa_profiles import DEFAULT_QA_PROFILE, apply_qa_profile  # noqa: E402
 
 logger = logging.getLogger("kgrag-api")
 
@@ -99,15 +100,17 @@ class AskRequest(BaseModel):
     query: str
     keywords: list[str] = []
     dry_run: bool = False
-    agent_mode: bool = False
+    agent_mode: bool = True
     include_trace: bool = False
-    retrieval_k: int = Field(default=20, ge=1, le=100)
-    context_k: int = Field(default=6, ge=1, le=30)
-    relation_k: int = Field(default=30, ge=1, le=100)
-    relation_evidence_k: int = Field(default=6, ge=1, le=30)
-    graph_evidence_k: int = Field(default=4, ge=1, le=30)
-    graph_evidence_pool_k: int = Field(default=30, ge=1, le=100)
-    max_chars_per_chunk: int = Field(default=900, ge=100, le=5000)
+    profile: Literal["fast", "balanced", "deep"] = DEFAULT_QA_PROFILE
+    retrieval_k: int | None = Field(default=None, ge=1, le=100)
+    context_k: int | None = Field(default=None, ge=1, le=30)
+    relation_k: int | None = Field(default=None, ge=1, le=100)
+    relation_evidence_k: int | None = Field(default=None, ge=1, le=30)
+    graph_evidence_k: int | None = Field(default=None, ge=1, le=30)
+    graph_evidence_pool_k: int | None = Field(default=None, ge=1, le=100)
+    max_chars_per_chunk: int | None = Field(default=None, ge=100, le=5000)
+    max_tokens: int | None = Field(default=None, ge=100, le=4000)
 
 
 class HealthResponse(BaseModel):
@@ -194,6 +197,14 @@ class EvalQuestionModel(BaseModel):
     requires_research_boundary: bool = False
 
 
+class BenchmarkRequest(BaseModel):
+    model_names: list[str] = []
+    profiles: list[Literal["fast", "balanced", "deep"]] = ["balanced"]
+    pipelines: list[Literal["standard", "agent"]] = ["standard"]
+    question_limit: int = Field(default=5, ge=1, le=10)
+    repeats: int = Field(default=1, ge=1, le=3)
+
+
 # ---------------------------------------------------------------------------
 # Lifespan: create shared connections once, reuse across requests
 # ---------------------------------------------------------------------------
@@ -252,13 +263,46 @@ async def health():
     return HealthResponse(status="ok", service="kgrag-qa", time=int(time.time()))
 
 
-@app.post("/ask")
-async def ask(body: AskRequest, request: Request):
-    started_at = time.perf_counter()
+@app.get("/health/deep")
+async def health_deep(request: Request):
+    checks = {}
+    try:
+        await run_in_threadpool(request.app.state.neo4j_driver.verify_connectivity)
+        checks["neo4j"] = {"ok": True}
+    except Exception as exc:
+        checks["neo4j"] = {"ok": False, "detail": str(exc)}
+    try:
+        collections = await run_in_threadpool(request.app.state.qdrant_client.get_collections)
+        checks["qdrant"] = {"ok": True, "collections": len(collections.collections)}
+    except Exception as exc:
+        checks["qdrant"] = {"ok": False, "detail": str(exc)}
+    from qa_settings import get_settings
+
+    active_model = get_settings().get("active_model") or {}
+    checks["model_config"] = {
+        "ok": bool(active_model.get("name") and active_model.get("base_url") and active_model.get("api_key")),
+        "model": active_model.get("name"),
+    }
+    checks["embedding_model"] = {"ok": request.app.state.embed_model is not None}
+    ok = all(check.get("ok") for check in checks.values())
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "ok" if ok else "degraded", "service": "kgrag-qa", "checks": checks},
+    )
+
+
+def _namespace_from_ask(body: AskRequest):
     ns = default_namespace(
         query=body.query,
         keywords=body.keywords,
         dry_run=body.dry_run,
+    )
+    from qa_settings import apply_active_model_to_ns
+
+    apply_active_model_to_ns(ns)
+    return apply_qa_profile(
+        ns,
+        body.profile,
         retrieval_k=body.retrieval_k,
         context_k=body.context_k,
         relation_k=body.relation_k,
@@ -266,10 +310,14 @@ async def ask(body: AskRequest, request: Request):
         graph_evidence_k=body.graph_evidence_k,
         graph_evidence_pool_k=body.graph_evidence_pool_k,
         max_chars_per_chunk=body.max_chars_per_chunk,
+        llm_max_tokens=body.max_tokens,
     )
-    from qa_settings import apply_active_model_to_ns
 
-    apply_active_model_to_ns(ns)
+
+@app.post("/ask")
+async def ask(body: AskRequest, request: Request):
+    started_at = time.perf_counter()
+    ns = _namespace_from_ask(body)
     try:
         if body.agent_mode:
             trace = AgentTrace(query=body.query)
@@ -310,39 +358,25 @@ def _sse_event(payload: dict) -> str:
 
 @app.post("/ask/stream")
 async def ask_stream(body: AskRequest, request: Request):
-    ns = default_namespace(
-        query=body.query,
-        keywords=body.keywords,
-        dry_run=body.dry_run,
-        retrieval_k=body.retrieval_k,
-        context_k=body.context_k,
-        relation_k=body.relation_k,
-        relation_evidence_k=body.relation_evidence_k,
-        graph_evidence_k=body.graph_evidence_k,
-        graph_evidence_pool_k=body.graph_evidence_pool_k,
-        max_chars_per_chunk=body.max_chars_per_chunk,
-    )
-    from qa_settings import apply_active_model_to_ns
-
-    apply_active_model_to_ns(ns)
+    ns = _namespace_from_ask(body)
 
     def event_stream():
         try:
             if body.agent_mode:
-                yield _sse_event(
-                    {
-                        "type": "error",
-                        "error": "unsupported_stream_mode",
-                        "detail": "Streaming is currently implemented for the standard KGRAG answer path.",
-                    }
+                events = stream_toolized_agent_events(
+                    ns,
+                    driver=request.app.state.neo4j_driver,
+                    embed_model=request.app.state.embed_model,
+                    qdrant_client=request.app.state.qdrant_client,
                 )
-                return
-            for event in stream_answer_query_events(
-                ns,
-                driver=request.app.state.neo4j_driver,
-                embed_model=request.app.state.embed_model,
-                qdrant_client=request.app.state.qdrant_client,
-            ):
+            else:
+                events = stream_answer_query_events(
+                    ns,
+                    driver=request.app.state.neo4j_driver,
+                    embed_model=request.app.state.embed_model,
+                    qdrant_client=request.app.state.qdrant_client,
+                )
+            for event in events:
                 yield _sse_event(event)
         except Exception as exc:
             logger.exception("qa stream failed")
@@ -443,44 +477,48 @@ async def dashboard_graph_data(_auth: AuthDep, request: Request, limit_entities:
 
 @app.get("/dashboard/settings")
 async def get_settings(_auth: AuthDep):
-    from qa_settings import get_settings
+    from qa_settings import get_public_settings
 
-    return get_settings()
+    return get_public_settings()
 
 
 @app.put("/dashboard/settings")
 async def put_settings(_auth: AuthDep, body: UpdateSettingsRequest):
-    from qa_settings import update_active_model
+    from qa_settings import get_public_settings, update_active_model
 
-    return update_active_model(body.active_model.model_dump(exclude_none=True))
+    update_active_model(body.active_model.model_dump(exclude_none=True))
+    return get_public_settings()
 
 
 @app.get("/dashboard/eval-models")
 async def get_eval_models(_auth: AuthDep):
-    from qa_settings import get_eval_models
+    from qa_settings import get_public_eval_models
 
-    return get_eval_models()
+    return get_public_eval_models()
 
 
 @app.post("/dashboard/eval-models")
 async def add_eval_model(_auth: AuthDep, body: EvalModelModel):
-    from qa_settings import add_eval_model
+    from qa_settings import add_eval_model, get_public_eval_models
 
-    return add_eval_model(body.model_dump())
+    add_eval_model(body.model_dump())
+    return get_public_eval_models()
 
 
 @app.patch("/dashboard/eval-models/{index}")
 async def patch_eval_model(_auth: AuthDep, index: int, body: EvalModelModel):
-    from qa_settings import update_eval_model
+    from qa_settings import get_public_eval_models, update_eval_model
 
-    return update_eval_model(index, body.model_dump(exclude_unset=True))
+    update_eval_model(index, body.model_dump(exclude_unset=True))
+    return get_public_eval_models()
 
 
 @app.delete("/dashboard/eval-models/{index}")
 async def delete_eval_model(_auth: AuthDep, index: int):
-    from qa_settings import delete_eval_model
+    from qa_settings import delete_eval_model, get_public_eval_models
 
-    return delete_eval_model(index)
+    delete_eval_model(index)
+    return get_public_eval_models()
 
 
 @app.get("/dashboard/eval-questions")
@@ -578,6 +616,76 @@ async def get_eval_runs(_auth: AuthDep):
                     "ok_rate": summary.get("ok_rate", 0),
                 })
     return entries
+
+
+@app.post("/dashboard/benchmarks")
+async def start_benchmark(
+    body: BenchmarkRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    _auth: AuthDep,
+):
+    from evaluate_qa import read_jsonl
+    from latency_benchmark import (
+        DEFAULT_CANDIDATE_MODELS,
+        run_benchmark_job,
+        write_job,
+    )
+    from qa_settings import get_settings
+
+    questions = read_jsonl(ROOT / "scripts" / "qa" / "eval_questions.jsonl")[: body.question_limit]
+    model_names = body.model_names or DEFAULT_CANDIDATE_MODELS
+    job_id = time.strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": time.time(),
+        "model_names": model_names,
+        "profiles": body.profiles,
+        "pipelines": body.pipelines,
+        "question_count": len(questions),
+        "repeats": body.repeats,
+        "total_runs": (
+            len(model_names)
+            * len(body.profiles)
+            * len(body.pipelines)
+            * len(questions)
+            * body.repeats
+        ),
+        "completed_runs": 0,
+    }
+    write_job(job)
+    background_tasks.add_task(
+        run_benchmark_job,
+        job=job,
+        questions=questions,
+        model_names=model_names,
+        profiles=body.profiles,
+        pipelines=body.pipelines,
+        repeats=body.repeats,
+        active_model=get_settings()["active_model"],
+        driver=request.app.state.neo4j_driver,
+        embed_model=request.app.state.embed_model,
+        qdrant_client=request.app.state.qdrant_client,
+    )
+    return job
+
+
+@app.get("/dashboard/benchmarks")
+async def get_benchmarks(_auth: AuthDep):
+    from latency_benchmark import list_jobs
+
+    return list_jobs()
+
+
+@app.get("/dashboard/benchmarks/{job_id}")
+async def get_benchmark(_auth: AuthDep, job_id: str):
+    from latency_benchmark import read_job
+
+    job = read_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Benchmark job not found")
+    return job
 
 
 @app.get("/dashboard/eval/runs/{run_id}")

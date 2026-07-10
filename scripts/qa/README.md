@@ -40,7 +40,7 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
 ```bash
 LLM_BASE_URL="https://api.siliconflow.cn/v1/chat/completions"
 LLM_API_KEY="你的_key"
-LLM_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+LLM_MODEL="Qwen/Qwen3.5-27B"
 QA_LLM_MAX_TOKENS=1200
 NEO4J_URL="bolt://localhost:7687"
 NEO4J_USER="neo4j"
