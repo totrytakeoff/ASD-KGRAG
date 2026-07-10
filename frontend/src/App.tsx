@@ -43,6 +43,41 @@ const DEFAULT_CONVERSATION_TITLE = "新对话";
 const CHAT_CONVERSATIONS_STORAGE_KEY = "kgrag_chat_conversations_v1";
 const CHAT_ACTIVE_STORAGE_KEY = "kgrag_chat_active_id_v1";
 
+async function readErrorDetail(resp: Response) {
+  try {
+    const data = await resp.json();
+    return data?.detail || data?.error || resp.statusText;
+  } catch {
+    return resp.statusText;
+  }
+}
+
+function buildAskErrorMessage(status: number, detail: string): AiMessage {
+  const normalized = detail.toLowerCase();
+  if (
+    normalized.includes("llm network error") ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout")
+  ) {
+    return {
+      role: "ai",
+      content:
+        "⚠️ 知识检索已发起，但外部 LLM 生成接口超时或网络异常，当前没有拿到最终回答。\n\n" +
+        "这不是 Neo4j/Qdrant 检索库挂了，也不是 `/ask` 路由没开；通常是当前配置的生成模型接口响应过慢或临时不可用。可以稍后重试，或在 Dashboard 的模型设置里切换/检查当前启用模型。\n\n" +
+        `后端状态: HTTP ${status}\n\n错误详情: ${detail}`,
+      retrieved_at: nowISO(),
+    };
+  }
+
+  return {
+    role: "ai",
+    content:
+      "⚠️ 后端 `/ask` 已响应，但回答生成失败。\n\n" +
+      `后端状态: HTTP ${status}\n\n错误详情: ${detail || "未知错误"}`,
+    retrieved_at: nowISO(),
+  };
+}
+
 function createConversation(title = DEFAULT_CONVERSATION_TITLE): Conversation {
   return {
     id: uid(),
@@ -131,9 +166,19 @@ async function askBackend(query: string): Promise<AiMessage | null> {
         graph_evidence_k: 4,
       }),
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      const detail = await readErrorDetail(resp);
+      return buildAskErrorMessage(resp.status, detail);
+    }
     const data = await resp.json();
-    if (!data?.answer) return null;
+    if (!data?.answer) {
+      return {
+        role: "ai",
+        content:
+          "⚠️ 后端 `/ask` 返回成功，但响应里没有 `answer` 字段，暂时无法展示最终回答。",
+        retrieved_at: nowISO(),
+      };
+    }
     const ctx = data.context || {};
     const relations = (ctx.relations || []).map((r: any) => ({
       source: r.source,
@@ -629,7 +674,7 @@ function ChatApp() {
         ai ?? {
           role: "ai",
           content:
-            "⚠️ 暂时无法连接后端 `/ask`。请确认 `scripts/qa/kgrag_api.py` 已在 8010 端口运行。当前显示的是 Mock 回答占位。\n\n若后端不可用,可参考侧边栏历史对话预览 KGRAG 效果。",
+            "⚠️ 暂时无法连接后端 `/ask`。请确认后端服务与 nginx 代理可用后重试。",
         },
       ],
       updated_at: nowISO(),
