@@ -14,8 +14,11 @@ sys.path.insert(0, str(ROOT / "scripts" / "qa"))
 import kgrag_answer  # noqa: E402
 import qa_settings  # noqa: E402
 from evaluate_qa import evaluate_result  # noqa: E402
+from evaluate_compare import qa_namespace  # noqa: E402
+from kgrag_api import BenchmarkRequest  # noqa: E402
 from latency_benchmark import agent_gate  # noqa: E402
 from qa_profiles import apply_qa_profile  # noqa: E402
+from retrieval_diagnostics import summarize as summarize_diagnostics  # noqa: E402
 
 
 class QaProfileTests(unittest.TestCase):
@@ -34,6 +37,31 @@ class QaProfileTests(unittest.TestCase):
             {"enable_thinking": False},
         )
         self.assertEqual(kgrag_answer.model_request_options("zai-org/GLM-4.5-Air"), {})
+
+    def test_natural_query_rewrite_extracts_domain_hints(self):
+        cases = {
+            "如果量表正常，是否就不需要专业评估了？": {"评估", "专业评估"},
+            "两三岁孩子社交反应少，家长想先做个筛查": {"筛查", "M-CHAT"},
+            "孩子语言少、不太看人，是不是就能判断为自闭症？": {"ASD", "诊断"},
+            "家庭训练和学校融合支持能否套用同一套孤独症干预方案？": {"家庭", "学校", "干预"},
+            "孤独症孩子睡不好还特别好动": {"睡眠", "注意力", "ADHD"},
+            "饮食干预是否可以治愈 ASD？": {"饮食干预", "治愈"},
+        }
+        for query, expected in cases.items():
+            with self.subTest(query=query):
+                self.assertTrue(expected.issubset(set(kgrag_answer.auto_keywords(query))))
+
+    def test_natural_query_rewrite_drops_conversational_fragments(self):
+        keywords = kgrag_answer.auto_keywords("回答 ASD 知识问题时为什么需要说明文献证据来源？")
+
+        self.assertNotIn("回答", keywords)
+        self.assertIn("证据", keywords)
+
+    def test_natural_query_rewrite_prefers_specific_intervention(self):
+        keywords = kgrag_answer.auto_keywords("饮食干预是否可以治愈 ASD？")
+
+        self.assertIn("饮食干预", keywords)
+        self.assertNotIn("干预", keywords)
 
 
 class RetrievalCacheTests(unittest.TestCase):
@@ -155,6 +183,11 @@ class AgentGateTests(unittest.TestCase):
         self.assertTrue(gates[0]["passed"])
         self.assertEqual(gates[0]["latency_overhead_rate"], 0.15)
 
+    def test_full_evaluation_allows_fifty_questions(self):
+        request = BenchmarkRequest(question_limit=50)
+
+        self.assertEqual(request.question_limit, 50)
+
 
 class EvaluationTests(unittest.TestCase):
     def test_non_dry_run_empty_answer_fails_quality(self):
@@ -171,6 +204,93 @@ class EvaluationTests(unittest.TestCase):
         self.assertFalse(evaluated["ok"])
         self.assertFalse(evaluated["checks"]["answer_present"])
         self.assertFalse(evaluated["checks"]["answer_cited"])
+
+    def test_expected_term_can_be_found_in_retrieved_chunk_text(self):
+        evaluated = evaluate_result(
+            {"id": "q1", "query": "question", "expect_graph_terms": ["ADI-R"]},
+            {
+                "dry_run": True,
+                "context": {
+                    "contexts": [{"citation_id": "C1", "text": "ADI-R 用于结构化访谈。"}],
+                    "relations": [],
+                },
+            },
+            1.0,
+        )
+
+        self.assertTrue(evaluated["checks"]["expected_term_seen"])
+
+    def test_expected_term_uses_aliases_and_evidence_metadata(self):
+        alias_evaluated = evaluate_result(
+            {"id": "q1", "query": "question", "expect_graph_terms": ["高压氧"]},
+            {
+                "dry_run": True,
+                "context": {
+                    "contexts": [{"citation_id": "C1", "text": "Hyperbaric oxygen therapy trial."}],
+                    "relations": [],
+                },
+            },
+            1.0,
+        )
+        evidence_evaluated = evaluate_result(
+            {"id": "q2", "query": "question", "expect_graph_terms": ["证据"]},
+            {
+                "dry_run": True,
+                "context": {
+                    "contexts": [{"citation_id": "C1", "evidence_level": "B"}],
+                    "relations": [],
+                },
+            },
+            1.0,
+        )
+
+        self.assertTrue(alias_evaluated["checks"]["expected_term_seen"])
+        self.assertTrue(evidence_evaluated["checks"]["expected_term_seen"])
+
+    def test_compare_can_ignore_curated_question_keywords(self):
+        args = SimpleNamespace(
+            ignore_question_keywords=True,
+            context_k=4,
+            graph_evidence_k=2,
+            retrieval_k=20,
+            relation_k=30,
+            relation_evidence_k=6,
+            graph_evidence_pool_k=30,
+            max_chars_per_chunk=600,
+        )
+
+        namespace = qa_namespace(
+            {"query": "ADOS 是什么", "keywords": ["ADOS", "ASD"]},
+            args,
+        )
+
+        self.assertEqual(namespace.keywords, [])
+
+    def test_diagnostic_summary_collects_failures_and_governance_candidates(self):
+        rows = [
+            {
+                "id": "q1",
+                "category": "assessment",
+                "failures": ["expected_term_seen"],
+                "final_contexts": [{"retrieval": "vector"}],
+                "matched_entities": [
+                    {
+                        "entity_id": "e1",
+                        "name": "ADOS",
+                        "source_chunk_count": 1,
+                        "quality_flags": ["low_support"],
+                        "is_isolated": False,
+                    }
+                ],
+            }
+        ]
+
+        summary = summarize_diagnostics(rows)
+
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(summary["check_failures"]["expected_term_seen"], 1)
+        self.assertEqual(summary["retrieval_modes"]["vector"], 1)
+        self.assertEqual(summary["governance_candidates"][0]["entity_id"], "e1")
 
 
 if __name__ == "__main__":

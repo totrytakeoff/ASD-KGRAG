@@ -1,0 +1,56 @@
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: asd-kgrag-neo4j
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      NEO4J_AUTH: "neo4j/asd-kgrag-local"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_dbms_security_procedures_allowlist: "apoc.*"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - ./data/processed/neo4j_import_full_ab_nonbook_v5_current_revalidated:/import/asd_kgrag:ro
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: asd-kgrag-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  qa-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.qa.deploy
+    container_name: asd-kgrag-qa
+    ports:
+      - "127.0.0.1:8010:8010"
+    env_file:
+      - .env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./hf_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - neo4j
+      - qdrant
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  qdrant_data:

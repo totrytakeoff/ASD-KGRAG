@@ -22,7 +22,7 @@
 - 别名管理。
 - 学生返还文件上传和查看。
 
-默认建议使用普通 KGRAG 问答链路。`agent_mode` 已可用，但更适合研发成员做 trace 和调度测试，暂不作为默认体验。
+内测默认使用受控 Agent 问答链路和 `balanced` profile。研发成员可显式传入 `agent_mode=false` 对照普通 KGRAG 链路。
 
 ## 3. 启动后端
 
@@ -141,8 +141,7 @@ curl -sS -X POST http://127.0.0.1:8010/ask \
 ## 8. 当前已知限制
 
 - 当前系统用于研究测试，不作为临床诊断或治疗建议。
-- 50 题标准评估集包含较多人工关键词，不能完全代表真实自然问法。
+- 50 题已完成忽略人工 keywords 的自然问法检索诊断，但题目仍较结构化，不能完全代表真实口语输入。
 - `agent_mode` 是受控调度框架，主要用于 trace、策略和后续扩展，不应单独视为回答质量来源。
 - 回答质量主要受数据质量、alias/query rewrite、图谱关系排序、向量召回和证据组织影响。
 - Dashboard 还没有展示完整 agent trace 和 baseline vs agent compare 结果。
-

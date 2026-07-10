@@ -15,7 +15,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "qa"))
 
-from kgrag_answer import answer_query, default_namespace, load_dotenv  # noqa: E402
+from kgrag_answer import answer_query, default_namespace, expand_keywords, load_dotenv  # noqa: E402
 
 
 DEFAULT_INPUT = ROOT / "scripts" / "qa" / "eval_questions.jsonl"
@@ -81,8 +81,12 @@ def context_text(result: dict) -> str:
     for item in context.get("contexts") or []:
         parts.extend(
             str(item.get(key) or "")
-            for key in ("citation_id", "title", "chunk_id", "evidence_level", "retrieval")
+            for key in ("citation_id", "title", "chunk_id", "evidence_level", "retrieval", "text")
         )
+        if item.get("citation_id"):
+            parts.append("文献证据")
+        if item.get("evidence_level"):
+            parts.append("证据等级")
     for row in context.get("relations") or []:
         parts.extend(
             str(row.get(key) or "")
@@ -134,7 +138,7 @@ def evaluate_result(question: dict, result: dict, elapsed_seconds: float) -> dic
     answer = answer_text(result)
     expects_answer = not bool(result.get("dry_run"))
     combined_context = context_text(result)
-    expected_terms = question.get("expect_graph_terms") or []
+    expected_terms = expand_keywords(question.get("expect_graph_terms") or [])
 
     answer_overstates = has_clinical_overstatement(answer) if answer else None
     metrics = {

@@ -44,6 +44,55 @@ DEFAULT_LLM_MODEL = "Qwen/Qwen3.5-27B"
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
 
+QUERY_HINT_RULES = (
+    ("ASD", ("asd", "autism", "孤独症", "自闭症", "谱系")),
+    ("评估", ("评估", "量表", "问卷", "筛查", "诊断", "判断")),
+    ("筛查", ("筛查",)),
+    ("诊断", ("诊断", "判断", "是不是", "只凭")),
+    ("干预", ("干预", "训练", "治疗", "支持策略", "干预方案")),
+    ("专业评估", ("专业评估",)),
+    ("研究背景", ("研究背景", "研究情境")),
+    ("证据", ("证据", "文献", "图谱关系", "来源")),
+    ("年龄", ("年龄", "两三岁", "幼儿", "婴幼儿", "成年人")),
+    ("家庭", ("家庭", "家长")),
+    ("学校", ("学校", "融合支持")),
+    ("睡眠", ("睡眠", "睡不好")),
+    ("注意力", ("注意力", "好动")),
+    ("ADHD", ("adhd", "好动")),
+    ("M-CHAT", ("两三岁", "幼儿筛查", "婴幼儿筛查")),
+    ("饮食干预", ("饮食",)),
+    ("高压氧", ("高压氧",)),
+    ("治愈", ("治愈",)),
+    ("用药", ("用药", "药物")),
+    ("情绪", ("情绪",)),
+    ("社交技能", ("社交技能",)),
+    ("家长培训", ("家长培训", "家长介入")),
+    ("辅助技术", ("辅助技术",)),
+    ("沟通", ("沟通",)),
+    ("游戏", ("游戏化", "游戏干预")),
+    ("胃肠", ("胃肠", "肠道")),
+    ("抑郁", ("抑郁",)),
+    ("早产", ("早产",)),
+    ("围产期", ("围产", "围生")),
+)
+
+CONVERSATIONAL_KEYWORD_PARTS = (
+    "什么",
+    "哪些",
+    "如何",
+    "是否",
+    "为什么",
+    "能不能",
+    "可以",
+    "资料",
+    "回答",
+    "问题",
+    "通常",
+    "怎样",
+    "怎么",
+)
+
+
 DEFAULT_QA_OPTIONS = {
     "retrieval_k": 20,
     "context_k": 6,
@@ -185,16 +234,31 @@ def auto_keywords(query: str) -> list[str]:
         "作用",
         "评估中有什么作用",
     }
+    normalized_query = normalize_alias_key(query)
+    keywords = [
+        canonical
+        for canonical, triggers in QUERY_HINT_RULES
+        if any(trigger.lower() in normalized_query for trigger in triggers)
+    ]
+    if "干预" in keywords and any(
+        keyword != "干预" and (keyword.endswith("干预") or keyword in {"家长培训", "辅助技术"})
+        for keyword in keywords
+    ):
+        keywords.remove("干预")
+    if keywords and "ASD" not in keywords:
+        keywords.insert(0, "ASD")
     tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*|[\u4e00-\u9fff]{2,}", query)
-    keywords = []
     for token in tokens:
         lowered = token.lower()
         if lowered in stopwords:
             continue
         if any(word in lowered for word in ("什么", "作用")):
             continue
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            if len(token) > 8 or any(part in token for part in CONVERSATIONAL_KEYWORD_PARTS):
+                continue
         keywords.append(token)
-    return sorted(set(keywords)) if keywords else [query]
+    return list(dict.fromkeys(keywords)) if keywords else [query]
 
 
 def compact_query_text(parts: list[str], max_chars: int = 220) -> str:
@@ -540,7 +604,7 @@ def retrieve_context(args, *, driver=None, embed_model=None, qdrant_client=None)
         if own_driver:
             driver.close()
 
-    return {
+    result = {
         "query": args.query,
         "keywords": keywords,
         "vector_queries": vector_queries,
@@ -548,6 +612,20 @@ def retrieve_context(args, *, driver=None, embed_model=None, qdrant_client=None)
         "contexts": contexts,
         "relations": relations,
     }
+    if getattr(args, "include_diagnostics", False):
+        result["diagnostics"] = {
+            "input_keywords": list(args.keywords or []),
+            "specific_keywords": specific,
+            "matched_entities": graph_result.get("entities") or [],
+            "relation_entities": relation_entities,
+            "vector_hits": vector_hits,
+            "merged_hits": merged_hits,
+            "selected_hits": selected_hits,
+            "graph_evidence_pool": graph_evidence_pool,
+            "graph_evidence": graph_evidence,
+            "graph_only_chunk_ids": graph_only_chunk_ids,
+        }
+    return result
 
 
 def evidence_policy(relations: list[dict]) -> dict:

@@ -127,9 +127,25 @@ scripts/qa/eval_questions.jsonl
 .venv/bin/python scripts/qa/evaluate_compare.py --limit 5
 ```
 
+完整自然问法对照（忽略题集人工关键词）：
+
+```bash
+.venv/bin/python scripts/qa/evaluate_compare.py \
+  --ignore-question-keywords \
+  --context-k 4 \
+  --graph-evidence-k 2 \
+  --max-chars-per-chunk 600
+```
+
+生成逐层检索诊断与数据治理候选：
+
+```bash
+.venv/bin/python scripts/qa/retrieval_diagnostics.py --profile balanced
+```
+
 对比输出写入 `data/qa_compare/<timestamp>_dry_run_compare/`，包含逐题 `baseline`、`agent`、`delta` 和聚合 summary。
 
-当前 50 题标准评估集大多包含人工关键词，baseline KGRAG 已经能稳定命中图谱证据，因此 baseline vs agent compare 可能大量显示 `tie`。这不是 agent 失败，而是说明当前评估集不适合单独衡量 agent 在自然无关键词问法下的收益。后续应扩展自然问法集和 `--ignore-question-keywords` 对比模式。
+当前 50 题自然问法检索诊断为 50/50；baseline vs Agent 中 Agent 改善 2、退化 0、持平 48。Agent 收益集中在诊断边界补关系，普遍召回质量仍主要来自 query rewrite、数据和检索组织。
 
 小样本真实生成：
 
@@ -177,6 +193,9 @@ scripts/qa/e2e_check.sh --with-real
 ## 当前评估基线
 
 - dry-run：50/50 通过
+- balanced 自然问法检索诊断：50/50 通过
+- balanced Agent/Qwen 27B 真实生成：50/50 成功、50/50 质量通过、0 降级
+- 全量真实生成 TTFT p50/p95：0.668/5.053 秒；总耗时 p50/p95：22.876/31.578 秒
 - 安全/边界真实生成小样本：8/8 通过
 - 评估工具版本边界真实生成小样本：5/5 通过
 - 中文自然问法真实生成小样本：5/5 通过

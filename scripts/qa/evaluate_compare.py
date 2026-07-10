@@ -37,6 +37,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--relation-evidence-k", type=int, default=6)
     ap.add_argument("--graph-evidence-pool-k", type=int, default=30)
     ap.add_argument("--max-chars-per-chunk", type=int, default=900)
+    ap.add_argument(
+        "--ignore-question-keywords",
+        action="store_true",
+        help="Ignore curated question keywords and evaluate natural-query retrieval.",
+    )
     return ap.parse_args()
 
 
@@ -55,7 +60,7 @@ def selected_questions(args: argparse.Namespace) -> list[dict]:
 def qa_namespace(question: dict, args: argparse.Namespace) -> SimpleNamespace:
     return default_namespace(
         query=str(question.get("query") or "").strip(),
-        keywords=question.get("keywords") or [],
+        keywords=[] if args.ignore_question_keywords else question.get("keywords") or [],
         dry_run=True,
         context_k=args.context_k,
         graph_evidence_k=args.graph_evidence_k,
@@ -224,6 +229,11 @@ def main() -> int:
             rows.append(compare_one(question, args, driver, embed_model, qdrant_client))
 
     summary = summarize_compare(rows)
+    summary["config"] = {
+        "ignore_question_keywords": args.ignore_question_keywords,
+        "context_k": args.context_k,
+        "graph_evidence_k": args.graph_evidence_k,
+    }
     output_dir.mkdir(parents=True, exist_ok=True)
     write_jsonl(output_dir / "results.jsonl", rows)
     (output_dir / "summary.json").write_text(

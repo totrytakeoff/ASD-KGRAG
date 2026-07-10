@@ -23,7 +23,7 @@ SERVER_NAME=your.internal.host \
 bash scripts/deploy/internal_deploy.sh
 ```
 
-服务器使用专用 Compose 文件时，将 `COMPOSE_FILE` 改为对应文件名。`SERVER_NAME` 可填写内网域名或服务器 IP。
+离线服务器使用仓库中的 `docker-compose.deploy.yml` 和 `Dockerfile.qa.deploy`。部署前需要在 `wheels/` 准备 `requirements-qa.deploy.txt` 对应 wheels 及 `torch==2.7.1+cpu`，并将 `COMPOSE_FILE` 设为 `docker-compose.deploy.yml`。`SERVER_NAME` 可填写内网域名或服务器 IP。
 
 ## 问答模式
 
@@ -52,6 +52,8 @@ Dashboard 的“模型性能”页面可启动 SiliconFlow 候选模型延迟基
 2026-07-10 的 3 题平衡模式筛选中，`Qwen/Qwen3.5-27B` 成功率和质量通过率均为 3/3，TTFT p50/p95 为 0.52/0.53 秒，总耗时 p50/p95 为 26.79/31.52 秒，因此作为当前内测默认问答模型。该结果用于项目组内测选型，不替代后续完整评测。
 
 同日使用禁用检索缓存的 3 题对照中，标准链路与 Agent 链路均为 3/3 成功、3/3 质量通过；Agent p50 总耗时 21.15 秒，标准链路 22.74 秒，门槛通过。因此内测默认启用 Agent 链路；请求显式传入 `"agent_mode": false` 可回退到标准链路。
+
+同日完成当前默认 Agent/Qwen 27B 的 50 题 balanced 真实生成评测：50/50 成功、50/50 质量通过、0 降级、0 重试；TTFT p50/p95 为 0.668/5.053 秒，总耗时 p50/p95 为 22.876/31.578 秒。结果保存在 `data/qa_benchmarks/20260710_093128_cdba82.json`。
 
 ## 回滚
 

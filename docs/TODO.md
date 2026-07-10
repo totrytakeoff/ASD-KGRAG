@@ -64,7 +64,7 @@
 
 ### P2 召回/截断质量
 
-- [x] **P2-1 中文查询质量改善** — 已加入 deterministic query rewrite / 多查询向量检索，不更换 embedding、不重建 Qdrant；新增 5 道中文自然问法评估题，dry-run 50/50，query_quality 真实生成 5/5。
+- [x] **P2-1 中文查询质量改善** — deterministic query rewrite 已支持领域提示、隐含意图和具体词优先；不更换 embedding、不重建 Qdrant。忽略人工 keywords 的 50 题 balanced 检索诊断达到 50/50。
 - [x] **P2-2 图谱降噪 + alias 补全** — 已补 query-only alias map，覆盖 ADOS/ADOS-2、ADI-R、M-CHAT/R/F、CARS、ABC、DSM、SRS、SCQ、AQ，以及 ADI-R / EIBI / 家长培训 / 早产围产期 / 药物 / 高压氧等高价值查询；检索层已加入实体去重、具体关键词优先、质量字段降噪和类型意图加权，不直接改写 Neo4j 图谱数据。
 - [x] **P2-3 prompt 截断策略改进** — `trim_text` 已改为按关键词命中最密集区间截取，避免长 chunk 中首个弱命中遮蔽后续关键证据。
 
@@ -84,17 +84,17 @@
 
 ### R1 检索质量与数据组织优化 — 下一阶段主线
 
-- [ ] **R1-1 检索诊断工具** — 为单 query 输出 auto keywords、expanded aliases、matched entities、filtered entities、relations、graph evidence chunks、vector hits、final contexts，优先服务问题定位，而不是继续比较 agent 是否“提升”。
+- [x] **R1-1 检索诊断工具** — `retrieval_diagnostics.py` 已输出 expanded keywords、matched/filtered entities、relations、graph evidence pool、vector hits、final contexts、失败检查和分类汇总。
 - [ ] **R1-2 自然问法评估集** — 新增无人工 keywords 的自然 query set，覆盖家长问法、教师问法、临床边界问法，用于衡量真实召回能力。
 - [ ] **R1-3 route-aware relation rerank** — assessment / intervention / risk / safety 使用不同关系优先级和降噪策略，降低泛实体、弱关系、低质量实体干扰。
-- [ ] **R1-4 数据治理候选清单** — 输出高频低质实体、单 chunk 实体、跨类型 alias 冲突、research_context_only 高风险关系，供人工审核。
-- [ ] **R1-5 compare 扩展** — `evaluate_compare.py` 增加 `--ignore-question-keywords`，并逐步扩展 graph-only / vector-only / pure-llm baseline。
+- [x] **R1-4 数据治理候选清单（第一版）** — 诊断汇总已输出高频低支撑、孤立、单 chunk 和 quality_flags 实体候选；跨类型 alias 冲突与关系级审核页面待扩展。
+- [x] **R1-5 compare 无关键词模式** — `evaluate_compare.py --ignore-question-keywords` 已完成；graph-only / vector-only / pure-llm baseline 仍待扩展。
 
 ### R2 可观测性与产品化
 
 - [ ] **R2-1 Dashboard 展示 agent trace summary** — 在问答或评估详情中展示 route、answer_mode、followup、forbidden_claims 和关键 trace 步骤。
 - [ ] **R2-2 Dashboard 接入 compare run** — 展示 baseline vs agent 的 delta、route 分布、followup 触发率和退化案例。
-- [ ] **R2-3 前端问答 agent_mode 开关** — 给本地调试和演示提供可切换入口，默认仍可保持 baseline KGRAG。
+- [ ] **R2-3 前端问答 agent_mode 开关** — 给本地调试和演示提供可切换入口；当前默认 Agent，切换后可直观回退 baseline KGRAG。
 
 ---
 

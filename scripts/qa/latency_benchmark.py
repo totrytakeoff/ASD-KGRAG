@@ -223,6 +223,7 @@ def run_benchmark_job(
                                 qdrant_client=qdrant_client,
                             )
                             rows.append(row)
+                            job["rows"] = rows
                             job["completed_runs"] = len(rows)
                             write_job(job)
         job["status"] = "completed"

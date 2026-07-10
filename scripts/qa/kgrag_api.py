@@ -201,7 +201,7 @@ class BenchmarkRequest(BaseModel):
     model_names: list[str] = []
     profiles: list[Literal["fast", "balanced", "deep"]] = ["balanced"]
     pipelines: list[Literal["standard", "agent"]] = ["standard"]
-    question_limit: int = Field(default=5, ge=1, le=10)
+    question_limit: int = Field(default=5, ge=1, le=50)
     repeats: int = Field(default=1, ge=1, le=3)
 
 
