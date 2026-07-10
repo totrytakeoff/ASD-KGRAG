@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -19,7 +20,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +31,7 @@ from kgrag_answer import (  # noqa: E402
     answer_query,
     default_namespace,
     load_dotenv,
+    stream_answer_query_events,
 )
 from agent_tools import run_toolized_agent  # noqa: E402
 from agent_trace import AgentTrace  # noqa: E402
@@ -298,6 +300,63 @@ async def ask(body: AskRequest, request: Request):
     if isinstance(result, dict):
         result.setdefault("timing", {})["api_total_sec"] = round(time.perf_counter() - started_at, 3)
     return result
+
+
+def _sse_event(payload: dict) -> str:
+    event_type = payload.get("type", "message")
+    data = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event_type}\ndata: {data}\n\n"
+
+
+@app.post("/ask/stream")
+async def ask_stream(body: AskRequest, request: Request):
+    ns = default_namespace(
+        query=body.query,
+        keywords=body.keywords,
+        dry_run=body.dry_run,
+        retrieval_k=body.retrieval_k,
+        context_k=body.context_k,
+        relation_k=body.relation_k,
+        relation_evidence_k=body.relation_evidence_k,
+        graph_evidence_k=body.graph_evidence_k,
+        graph_evidence_pool_k=body.graph_evidence_pool_k,
+        max_chars_per_chunk=body.max_chars_per_chunk,
+    )
+    from qa_settings import apply_active_model_to_ns
+
+    apply_active_model_to_ns(ns)
+
+    def event_stream():
+        try:
+            if body.agent_mode:
+                yield _sse_event(
+                    {
+                        "type": "error",
+                        "error": "unsupported_stream_mode",
+                        "detail": "Streaming is currently implemented for the standard KGRAG answer path.",
+                    }
+                )
+                return
+            for event in stream_answer_query_events(
+                ns,
+                driver=request.app.state.neo4j_driver,
+                embed_model=request.app.state.embed_model,
+                qdrant_client=request.app.state.qdrant_client,
+            ):
+                yield _sse_event(event)
+        except Exception as exc:
+            logger.exception("qa stream failed")
+            yield _sse_event({"type": "error", "error": "qa_failed", "detail": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

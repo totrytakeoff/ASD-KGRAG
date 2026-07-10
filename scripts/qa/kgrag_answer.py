@@ -679,6 +679,83 @@ def call_openai_compatible(
             raise RuntimeError(f"LLM network error: {exc}") from exc
 
 
+def call_openai_compatible_stream(
+    *,
+    model: str,
+    messages: list[dict],
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+    max_retries: int,
+    max_tokens: int,
+):
+    normalized_base = base_url.rstrip("/")
+    if normalized_base.endswith("/chat/completions"):
+        chat_url = normalized_base
+    else:
+        chat_url = urllib.parse.urljoin(f"{normalized_base}/", "chat/completions")
+
+    body = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "stream": True,
+    }
+    if max_tokens > 0:
+        body["max_tokens"] = max_tokens
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    attempt = 0
+    while True:
+        yielded = False
+        req = urllib.request.Request(chat_url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
+                    payload_text = line[5:].strip()
+                    if payload_text == "[DONE]":
+                        return
+                    try:
+                        payload = json.loads(payload_text)
+                    except json.JSONDecodeError:
+                        continue
+                    choice = (payload.get("choices") or [{}])[0]
+                    delta = choice.get("delta") or {}
+                    text = delta.get("content") or choice.get("text") or ""
+                    if text:
+                        yielded = True
+                        yield text
+            return
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            retriable = exc.code in {429, 500, 502, 503, 504}
+            if retriable and not yielded and attempt < max_retries:
+                attempt += 1
+                time.sleep(attempt)
+                continue
+            raise RuntimeError(f"LLM API error: {exc.code} {detail}") from exc
+        except (
+            TimeoutError,
+            socket.timeout,
+            ConnectionError,
+            ConnectionResetError,
+            ssl.SSLError,
+            urllib.error.URLError,
+        ) as exc:
+            if not yielded and attempt < max_retries:
+                attempt += 1
+                time.sleep(attempt)
+                continue
+            raise RuntimeError(f"LLM network error: {exc}") from exc
+
+
 def format_dry_run(context: dict, messages: list[dict]) -> str:
     lines = [
         f"query: {context['query']}",
@@ -800,6 +877,75 @@ def answer_query(args, *, driver=None, embed_model=None, qdrant_client=None) -> 
     )
     result["timing"]["llm_sec"] = round(time.perf_counter() - llm_t0, 3)
     return result
+
+
+def stream_answer_query_events(args, *, driver=None, embed_model=None, qdrant_client=None):
+    started_at = time.perf_counter()
+    t0 = time.perf_counter()
+    context = retrieve_context(args, driver=driver, embed_model=embed_model, qdrant_client=qdrant_client)
+    retrieve_sec = time.perf_counter() - t0
+    prompt_t0 = time.perf_counter()
+    messages = build_prompt(context, args.max_chars_per_chunk)
+    prompt_sec = time.perf_counter() - prompt_t0
+    prompt_chars = sum(len(m.get("content", "")) for m in messages)
+    timing = {
+        "retrieve_sec": round(retrieve_sec, 3),
+        "prompt_build_sec": round(prompt_sec, 3),
+        "prompt_chars": prompt_chars,
+        "llm_sec": 0.0,
+    }
+    context_payload = {
+        "query": context["query"],
+        "dry_run": bool(args.dry_run),
+        "context": summarize_context(context),
+        "timing": timing,
+    }
+    if args.dry_run:
+        context_payload["prompt_preview"] = messages[-1]["content"]
+        yield {"type": "done", **context_payload}
+        return
+
+    yield {"type": "context", **context_payload}
+    if not args.llm_api_key:
+        yield {
+            "type": "error",
+            "error": "qa_failed",
+            "detail": "LLM API key is not set. Use dry_run or set LLM_API_KEY / OPENAI_API_KEY.",
+        }
+        return
+
+    answer_parts = []
+    llm_t0 = time.perf_counter()
+    try:
+        for text in call_openai_compatible_stream(
+            model=args.llm_model,
+            messages=messages,
+            base_url=args.llm_base_url,
+            api_key=args.llm_api_key,
+            timeout_seconds=args.llm_timeout,
+            max_retries=args.llm_max_retries,
+            max_tokens=args.llm_max_tokens,
+        ):
+            answer_parts.append(text)
+            yield {"type": "token", "text": text}
+    except Exception as exc:
+        timing["llm_sec"] = round(time.perf_counter() - llm_t0, 3)
+        timing["api_total_sec"] = round(time.perf_counter() - started_at, 3)
+        yield {
+            "type": "error",
+            "error": "qa_failed",
+            "detail": str(exc),
+            "timing": timing,
+        }
+        return
+
+    timing["llm_sec"] = round(time.perf_counter() - llm_t0, 3)
+    timing["api_total_sec"] = round(time.perf_counter() - started_at, 3)
+    yield {
+        "type": "done",
+        "answer": "".join(answer_parts),
+        "timing": timing,
+    }
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

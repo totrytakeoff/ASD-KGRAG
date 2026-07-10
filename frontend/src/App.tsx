@@ -78,6 +78,37 @@ function buildAskErrorMessage(status: number, detail: string): AiMessage {
   };
 }
 
+function evidenceFromContext(ctx: any) {
+  const relations = (ctx?.relations || []).map((r: any) => ({
+    source: r.source,
+    target: r.target,
+    relation: r.relation,
+    support_count: r.support_count,
+    confidence: r.confidence,
+    source_type: r.source_type,
+    target_type: r.target_type,
+  }));
+  const nodeTypes = new Map<string, string>();
+  relations.forEach((r: any) => {
+    if (r.source) nodeTypes.set(r.source, r.source_type || nodeTypes.get(r.source) || "Entity");
+    if (r.target) nodeTypes.set(r.target, r.target_type || nodeTypes.get(r.target) || "Entity");
+  });
+  const nodes = Array.from(nodeTypes.entries()).map(([id, type]) => ({
+    id,
+    name: id,
+    type,
+  }));
+  const citations = (ctx?.contexts || []).map((c: any, i: number) => ({
+    citation_id: c.citation_id || `C${i + 1}`,
+    title: c.title,
+    year: c.year,
+    evidence_level: c.evidence_level,
+    retrieval: c.retrieval,
+    score: c.score,
+  }));
+  return { relations, nodes, citations };
+}
+
 function createConversation(title = DEFAULT_CONVERSATION_TITLE): Conversation {
   return {
     id: uid(),
@@ -179,45 +210,110 @@ async function askBackend(query: string): Promise<AiMessage | null> {
         retrieved_at: nowISO(),
       };
     }
-    const ctx = data.context || {};
-    const relations = (ctx.relations || []).map((r: any) => ({
-      source: r.source,
-      target: r.target,
-      relation: r.relation,
-      support_count: r.support_count,
-      confidence: r.confidence,
-      source_type: r.source_type,
-      target_type: r.target_type,
-    }));
-    const nodeTypes = new Map<string, string>();
-    relations.forEach((r: any) => {
-      if (r.source) nodeTypes.set(r.source, r.source_type || nodeTypes.get(r.source) || "Entity");
-      if (r.target) nodeTypes.set(r.target, r.target_type || nodeTypes.get(r.target) || "Entity");
-    });
-    const nodes = Array.from(nodeTypes.entries()).map(([id, type]) => ({
-      id,
-      name: id,
-      type,
-    }));
-    const citations = (ctx.contexts || []).map((c: any, i: number) => ({
-      citation_id: c.citation_id || `C${i + 1}`,
-      title: c.title,
-      year: c.year,
-      evidence_level: c.evidence_level,
-      retrieval: c.retrieval,
-      score: c.score,
-    }));
+    const evidence = evidenceFromContext(data.context || {});
     return {
       role: "ai",
       content: data.answer,
-      relations,
-      nodes,
-      citations,
+      ...evidence,
       retrieved_at: nowISO(),
     };
   } catch {
     return null;
   }
+}
+
+type StreamPatch = (updater: (current: AiMessage | null) => AiMessage) => void;
+
+async function askBackendStream(query: string, patch: StreamPatch): Promise<void> {
+  const resp = await fetch("/ask/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      dry_run: false,
+      context_k: 6,
+      graph_evidence_k: 4,
+    }),
+  });
+  if (!resp.ok) {
+    const detail = await readErrorDetail(resp);
+    patch(() => buildAskErrorMessage(resp.status, detail));
+    return;
+  }
+  if (!resp.body) {
+    throw new Error("Streaming response body is not available.");
+  }
+
+  const decoder = new TextDecoder();
+  const reader = resp.body.getReader();
+  let buffer = "";
+
+  const applyEvent = (event: any) => {
+    if (!event || typeof event !== "object") return;
+    if (event.type === "context") {
+      const evidence = evidenceFromContext(event.context || {});
+      patch((current) => ({
+        ...(current || { role: "ai", content: "" }),
+        ...evidence,
+        retrieved_at: nowISO(),
+      }));
+      return;
+    }
+    if (event.type === "token") {
+      const text = event.text || "";
+      if (!text) return;
+      patch((current) => ({
+        ...(current || { role: "ai", content: "" }),
+        content: `${current?.content || ""}${text}`,
+        retrieved_at: nowISO(),
+      }));
+      return;
+    }
+    if (event.type === "done") {
+      patch((current) => ({
+        ...(current || { role: "ai", content: "" }),
+        content: event.answer || current?.content || "",
+        retrieved_at: nowISO(),
+      }));
+      return;
+    }
+    if (event.type === "error") {
+      const errorMessage = buildAskErrorMessage(500, event.detail || event.error || "stream failed");
+      patch((current) => ({
+        ...(current || errorMessage),
+        content: current?.content
+          ? `${current.content}\n\n---\n${errorMessage.content}`
+          : errorMessage.content,
+        retrieved_at: nowISO(),
+      }));
+    }
+  };
+
+  const parseBlock = (block: string) => {
+    const dataLines = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart());
+    if (dataLines.length === 0) return;
+    try {
+      applyEvent(JSON.parse(dataLines.join("\n")));
+    } catch {
+      // Ignore malformed stream frames and keep reading.
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      parseBlock(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) parseBlock(buffer);
 }
 
 function Sidebar({
@@ -629,6 +725,10 @@ function ChatApp() {
     setConversations((prev) => prev.map((c) => (c.id === activeId ? fn(c) : c)));
   };
 
+  const updateConversation = (id: string, fn: (c: Conversation) => Conversation) => {
+    setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
+  };
+
   const renameConversation = (id: string, title: string) => {
     const nextTitle = title.trim() || DEFAULT_CONVERSATION_TITLE;
     setConversations((prev) =>
@@ -654,8 +754,9 @@ function ChatApp() {
   const handleSend = async () => {
     const q = input.trim();
     if (!q || loading) return;
+    const targetId = activeId;
     setInput("");
-    updateActive((c) => ({
+    updateConversation(targetId, (c) => ({
       ...c,
       title:
         isDefaultTitle(c.title) && c.messages.length === 0
@@ -665,20 +766,35 @@ function ChatApp() {
       updated_at: nowISO(),
     }));
     setLoading(true);
-    const ai = await askBackend(q);
-    setLoading(false);
-    updateActive((c) => ({
-      ...c,
-      messages: [
-        ...c.messages,
-        ai ?? {
-          role: "ai",
-          content:
-            "⚠️ 暂时无法连接后端 `/ask`。请确认后端服务与 nginx 代理可用后重试。",
-        },
-      ],
-      updated_at: nowISO(),
-    }));
+
+    const patchAiMessage: StreamPatch = (updater) => {
+      updateConversation(targetId, (c) => {
+        const messages = [...c.messages];
+        const last = messages[messages.length - 1];
+        if (last?.role === "ai") {
+          messages[messages.length - 1] = updater(last);
+        } else {
+          messages.push(updater(null));
+        }
+        return { ...c, messages, updated_at: nowISO() };
+      });
+    };
+
+    try {
+      await askBackendStream(q, patchAiMessage);
+    } catch {
+      const ai = await askBackend(q);
+      patchAiMessage(
+        () =>
+          ai ?? {
+            role: "ai",
+            content:
+              "⚠️ 暂时无法连接后端 `/ask`。请确认后端服务与 nginx 代理可用后重试。",
+          },
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleNew = () => {
@@ -709,6 +825,9 @@ function ChatApp() {
       return next;
     });
   };
+
+  const lastActiveMessage = active?.messages[active.messages.length - 1];
+  const showLoadingBubble = loading && lastActiveMessage?.role !== "ai";
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-gray-50 font-sans">
@@ -815,7 +934,7 @@ function ChatApp() {
             {active?.messages.map((m, i) => (
               <MessageBubble key={i} msg={m} />
             ))}
-            {loading && <LoadingBubble stage={loadingStage} />}
+            {showLoadingBubble && <LoadingBubble stage={loadingStage} />}
           </div>
         </div>
 
@@ -829,7 +948,7 @@ function ChatApp() {
       </main>
     </div>
   );
-}
+};
 
 // ---------------------------------------------------------------------------
 // Dashboard wrapper with internal navigation state
